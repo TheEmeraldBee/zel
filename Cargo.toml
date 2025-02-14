@@ -1,0 +1,9 @@
+[package]
+name = "zel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chumsky = "0.9.3"
+cranelift = "0.116.1"
+logos = "0.15.0"
