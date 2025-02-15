@@ -1,13 +1,13 @@
-# Zel: A language with the goal of making writing code more fun!
+# Jos: A language with the goal of making writing code more fun!
 This language is my personal "perfect" language, but I would love to hear your feedback.
 
 ## Example
 ```
 var myvar = 12i8; // Create a basic variable
-myvar = 5; // Doesn't work! var is not mutable!
+myvar = 5; // Works! the `var` keyword means that variables are mutable!
 
-mut var myvar = 12i8; // Create a basic mutable variable!
-myvar = 5; // Works!
+const myvar = 12i8; // Create a basic variable with const
+myvar = 5; // Doesn't work! the `const` keyword means that variables are immutable!
 
 // Type Aliasing!
 const MyType = u32;
@@ -22,6 +22,10 @@ const MyTemplate = temp {
   const say_hi: fn(*self);
 };
 
+mut var MyMutableFunction = fn(title: string) {
+  print("the book's name is {}", title);
+}
+
 // Create a struct
 const MyType = struct(MyTemplate) {
   name: string,
@@ -35,6 +39,16 @@ const my_template_func = fn(user: *MyTemplate) {
   user.say_hi()
 }
 
+// Closures
+const hi = fn() {print("Hello, world!")};
+hi();
+
+fn() {print("hello, world!")}();
+
+// Use file
+const my_file = use hello_world;
+const my_file = use hello_world_me.zl;
+
 ```
 
 ## Language Definition
@@ -45,7 +59,7 @@ const my_template_func = fn(user: *MyTemplate) {
 - nullables are known
 - Statically typed
 - Pass by pointer, but pass ownership if not using copy (`%`) or a pointer (`*`)
-- Ownership but no borrowing (memory handling is manual)
+- Ownership but no borrowing (memory handling is manual, but allocations can be released automatically)
 - `.` before a value interprets the type based on context (`.enummember`)
 - `var` keyword for creating variables
 - `const` keyword for variables that are known at compiletime
@@ -66,9 +80,10 @@ const my_template_func = fn(user: *MyTemplate) {
   - `[typename]` would mark a type as a list of that type
   - `[typename; size]` a list with the size of the value in the size position
   - `[value, ...]` would make a list with the given elements.
-  - `[value, ...; size]` would make a list with the given elements, and automatically set the size to the num of elements provided.
+  - `[value, ...; size]` would make a list with the given elements.
 - dicts (Hash map types that may have any hashable type as a key, and any type as a value)
   - `{typename, typename}` would create a dictionary with the given types
+  - `{key => value, ...}` would create a dictionary with the given keys and values already initialized
 - option (a marked type that could be null)
   - `?typename` would mark the type of a variable as optional
 - error (a marked type that could be an error)
@@ -78,9 +93,9 @@ const my_template_func = fn(user: *MyTemplate) {
 - enums (sum types)
   - `enum { membername: type, ... }`
 - functions
-  - `fn(param: paramtype, ...)` would be a function with inputs but no outputs
-  - `fn(param: paramtype, ...) -> typename` would be a function with inputs and an output
-  - `fn() {}` would be a function that is defined and is a value not a type
+  - `const a = fn(param: paramtype, ...)` would be a function with inputs but no outputs
+  - `const b = fn(param: paramtype, ...) -> typename` would be a function with inputs and an output
+  - `const c = fn() {}` would be a function that is defined and is a value not a type
 - templates
   - ```
     const MyTemplate = temp {

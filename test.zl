@@ -1,0 +1,30 @@
+const mystr = "Hello World";
+
+const hi = fn(val) {
+	print("Hello, ", val);
+	val
+};
+
+const mult_nums = fn(a, b) {
+	a * b
+};
+
+if mult_nums(5, 20) == 100 {
+	print("If statement works!");
+};
+
+var y = if "hello" == "bye" {
+	print("Uh oh");
+	5
+} else if "test" == "test" {
+	print("Yay!");
+	10
+} else {
+	print("Oh boy");
+	15
+};
+
+print("the result of 5 * 2.5 is: ", mult_nums(5, 2.5));
+
+print("This is my code!", " You can print how ever many things you want to!");
+hi(5)
