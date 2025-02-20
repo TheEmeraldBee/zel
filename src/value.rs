@@ -3,7 +3,7 @@ use std::{
     rc::Rc,
 };
 
-use crate::{Expr, Spanned};
+use crate::{eval::Error, Expr, Span, Spanned};
 
 #[derive(Clone)]
 pub enum Value<'src> {
@@ -14,7 +14,7 @@ pub enum Value<'src> {
     List(Vec<Self>),
     Func(Vec<&'src str>, Box<Spanned<Expr<'src>>>),
 
-    Rust(Rc<Box<dyn Fn(Vec<Value<'src>>) -> Value<'src>>>),
+    Rust(Rc<Box<dyn Fn(Span, Vec<Value<'src>>) -> Result<Value<'src>, Error>>>),
 }
 
 impl<'src> Value<'src> {
@@ -144,6 +144,25 @@ impl<'src> Value<'src> {
 
     pub fn gte(&self, rhs: &Self) -> Result<bool, String> {
         Ok(self.gt(rhs)? || self.eq(rhs)?)
+    }
+
+    pub fn or(&self, rhs: &Self) -> Result<bool, String> {
+        match (self, rhs) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(*a || *b),
+            _ => Err(format!(
+                "Cannot compare `{}` and `{}` because they aren't both booleans",
+                self, rhs
+            )),
+        }
+    }
+    pub fn and(&self, rhs: &Self) -> Result<bool, String> {
+        match (self, rhs) {
+            (Value::Bool(a), Value::Bool(b)) => Ok(*a && *b),
+            _ => Err(format!(
+                "Cannot compare `{}` and `{}` because they aren't both booleans",
+                self, rhs
+            )),
+        }
     }
 }
 

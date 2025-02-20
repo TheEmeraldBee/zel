@@ -26,12 +26,40 @@ pub fn lexer<'src>(
         .to_slice()
         .from_str()
         .unwrapped()
-        .map(Token::Num);
+        .map(Token::Num)
+        .boxed();
 
-    let string = just('"')
-        .ignore_then(none_of('"').repeated().to_slice())
-        .then_ignore(just('"'))
-        .map(Token::Str);
+    let escape = just('\\')
+        .then(choice((
+            just('\\'),
+            just('\\'),
+            just('/'),
+            just('"'),
+            just('b').to('\x08'),
+            just('f').to('\x0C'),
+            just('n').to('\n'),
+            just('r').to('\r'),
+            just('t').to('\t'),
+            just('u').ignore_then(text::digits(16).exactly(4).to_slice().validate(
+                |digits, e, emitter| {
+                    char::from_u32(u32::from_str_radix(digits, 16).unwrap()).unwrap_or_else(|| {
+                        emitter.emit(Rich::custom(e.span(), "invalid unicode character"));
+                        '\u{FFFD}' // Unicode Replacement Character
+                    })
+                },
+            )),
+        )))
+        .ignored()
+        .boxed();
+
+    let string = none_of("\\\"")
+        .ignored()
+        .or(escape)
+        .repeated()
+        .to_slice()
+        .map(Token::Str)
+        .delimited_by(just('"'), just('"'))
+        .boxed();
 
     let op = one_of("+-*/!?%=><")
         .repeated()
@@ -58,9 +86,14 @@ pub fn lexer<'src>(
 
     let token = num.or(string).or(op).or(ctrl).or(ident);
 
-    let comment = just("//")
+    let line_comment = just("//")
         .then(any().and_is(just('\n').not()).repeated())
         .padded();
+    let block_comment = just("//*")
+        .then(any().and_is(just("*//").not()).repeated())
+        .padded();
+
+    let comment = line_comment.or(block_comment).ignored();
 
     token
         .map_with(|tok, e| (tok, e.span()))

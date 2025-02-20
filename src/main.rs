@@ -1,5 +1,7 @@
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
+use eval::Error;
+use eval::Variable;
 
 use std::collections::HashMap;
 use std::env;
@@ -29,13 +31,30 @@ fn main() {
     let mut globals = HashMap::new();
     globals.insert(
         "print".to_string(),
-        Value::Rust(Rc::new(Box::new(|args| {
+        Variable::immutable(Value::Rust(Rc::new(Box::new(|_, args| {
             for arg in &args {
                 print!("{}", arg);
             }
             println!();
-            Value::Null
-        }))),
+            Ok(Value::Null)
+        })))),
+    );
+
+    globals.insert(
+        "read_line".to_string(),
+        Variable::immutable(Value::Rust(Rc::new(Box::new(|span, args| {
+            if !args.is_empty() {
+                return Err(Error::new(span, "read_line should not have any arguments!"));
+            }
+
+            let mut s = String::new();
+
+            std::io::stdin().read_line(&mut s).unwrap();
+
+            s = s.trim().to_string();
+
+            Ok(Value::Str(s))
+        })))),
     );
 
     let parse_errs = if let Some(tokens) = &tokens {
@@ -49,8 +68,8 @@ fn main() {
             .into_output_errors();
 
         if let Some((ast, _file_span)) = ast.filter(|_| errs.is_empty() && parse_errs.is_empty()) {
-            match eval_expr(ast, globals) {
-                Ok(_) => println!("Code successfully exited"),
+            match eval_expr(ast, &mut globals).0 {
+                Ok(_) => println!("\n\nCode successfully exited"),
                 Err(e) => errs.push(Rich::custom(e.span, e.msg)),
             }
         }
@@ -73,11 +92,11 @@ fn main() {
                 (filename.clone(), e.span().start..e.span().start),
             )
             .with_message(e.to_string())
-            .with_label(
-                Label::new((filename.clone(), e.span().into_range()))
-                    .with_message(e.reason().to_string())
-                    .with_color(Color::Red),
-            )
+            // .with_label(
+            //     Label::new((filename.clone(), e.span().into_range()))
+            //         .with_message(e.reason().to_string())
+            //         .with_color(Color::Red),
+            // )
             .with_labels(e.contexts().map(|(label, span)| {
                 Label::new((filename.clone(), span.into_range()))
                     .with_message(format!("while parsing this {}", label))

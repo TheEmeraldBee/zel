@@ -16,10 +16,28 @@ impl Error {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Variable<'src> {
+    pub mutable: bool,
+    pub val: Value<'src>,
+}
+
+impl<'src> Variable<'src> {
+    pub fn mutable(val: Value<'src>) -> Self {
+        Self { mutable: true, val }
+    }
+    pub fn immutable(val: Value<'src>) -> Self {
+        Self {
+            mutable: false,
+            val,
+        }
+    }
+}
+
 fn eval<'src>(
     expression: &Spanned<Expr<'src>>,
-    stack: &mut Vec<(&'src str, Value<'src>)>,
-    globals: &HashMap<String, Value<'src>>,
+    stack: &mut Vec<(&'src str, Variable<'src>)>,
+    globals: &mut HashMap<String, Variable<'src>>,
 ) -> Result<Value<'src>, Error> {
     Ok(match &expression.0 {
         Expr::Error => unreachable!("This cannot exist in valid ast"),
@@ -32,44 +50,86 @@ fn eval<'src>(
         ),
 
         Expr::Binary(lhs, op, rhs) => match op {
+            // Math
             BinaryOp::Add => eval(lhs, stack, globals)?.add(&eval(rhs, stack, globals)?),
             BinaryOp::Sub => eval(lhs, stack, globals)?.sub(&eval(rhs, stack, globals)?),
             BinaryOp::Mul => eval(lhs, stack, globals)?.mul(&eval(rhs, stack, globals)?),
             BinaryOp::Div => eval(lhs, stack, globals)?.div(&eval(rhs, stack, globals)?),
+
+            // Comparison
             BinaryOp::Eq => eval(lhs, stack, globals)?
                 .eq(&eval(rhs, stack, globals)?)
-                .map(|x| Value::Bool(x)),
+                .map(Value::Bool),
             BinaryOp::NotEq => eval(lhs, stack, globals)?
                 .ne(&eval(rhs, stack, globals)?)
-                .map(|x| Value::Bool(x)),
+                .map(Value::Bool),
             BinaryOp::Less => eval(lhs, stack, globals)?
                 .lt(&eval(rhs, stack, globals)?)
-                .map(|x| Value::Bool(x)),
+                .map(Value::Bool),
             BinaryOp::LessEq => eval(lhs, stack, globals)?
                 .lte(&eval(rhs, stack, globals)?)
-                .map(|x| Value::Bool(x)),
+                .map(Value::Bool),
             BinaryOp::Greater => eval(lhs, stack, globals)?
                 .gt(&eval(rhs, stack, globals)?)
-                .map(|x| Value::Bool(x)),
+                .map(Value::Bool),
             BinaryOp::GreaterEq => eval(lhs, stack, globals)?
                 .gte(&eval(rhs, stack, globals)?)
-                .map(|x| Value::Bool(x)),
+                .map(Value::Bool),
+
+            // Boolean Checks
+            BinaryOp::Or => eval(lhs, stack, globals)?
+                .or(&eval(rhs, stack, globals)?)
+                .map(Value::Bool),
+            BinaryOp::And => eval(lhs, stack, globals)?
+                .and(&eval(rhs, stack, globals)?)
+                .map(Value::Bool),
         }
         .map_err(|e| Error::new(expression.1, e))?,
 
-        Expr::Local(ident) => stack
-            .iter()
-            .rev()
-            .find(|(l, _)| *l == *ident)
-            .map(|(_, v)| v.clone())
-            .or_else(|| globals.get(*ident).cloned())
-            .ok_or_else(|| {
-                Error::new(expression.1, format!("Variable `{}` does not exist", ident))
-            })?,
+        Expr::Local(ident) => {
+            stack
+                .iter()
+                .rev()
+                .find(|(l, _)| *l == *ident)
+                .map(|(_, v)| v.clone())
+                .or_else(|| globals.get(*ident).cloned())
+                .ok_or_else(|| {
+                    Error::new(expression.1, format!("Variable `{}` does not exist", ident))
+                })?
+                .val
+        }
 
-        Expr::Const(ident, val, next) | Expr::Var(ident, val, next) => {
+        Expr::Var(ident, val, next) => {
             let val = eval(&val, stack, globals)?;
-            stack.push((ident, val));
+            stack.push((ident, Variable::mutable(val)));
+            eval(&next, stack, globals)?
+        }
+
+        Expr::Const(ident, val, next) => {
+            let val = eval(&val, stack, globals)?;
+            stack.push((ident, Variable::immutable(val)));
+            eval(&next, stack, globals)?
+        }
+
+        Expr::Set(ident, val, next) => {
+            let val = eval(&val, stack, globals)?;
+
+            let var = stack.iter_mut().find(|x| x.0 == *ident).ok_or_else(|| {
+                Error::new(
+                    expression.1,
+                    format!("Variable `{}` not initialized!", ident),
+                )
+            })?;
+
+            if !var.1.mutable {
+                return Err(Error::new(
+                    expression.1,
+                    format!("Variable `{}` is not mutable!", ident),
+                ));
+            }
+
+            var.1.val = val;
+
             eval(&next, stack, globals)?
         }
 
@@ -89,7 +149,9 @@ fn eval<'src>(
                     } else {
                         args.iter()
                             .zip(inputted_args.0.iter())
-                            .map(|(name, arg)| Ok((*name, eval(arg, stack, globals)?)))
+                            .map(|(name, arg)| {
+                                Ok((*name, Variable::immutable(eval(arg, stack, globals)?)))
+                            })
                             .collect::<Result<_, _>>()?
                     };
 
@@ -102,7 +164,7 @@ fn eval<'src>(
                         .map(|arg| Ok(eval(arg, stack, globals)?))
                         .collect::<Result<_, _>>()?;
 
-                    (**func)(parsed_args)
+                    (**func)(expression.1, parsed_args)?
                 }
                 f => {
                     return Err(Error::new(
@@ -131,13 +193,8 @@ fn eval<'src>(
 
 pub fn eval_expr<'src>(
     expression: Spanned<Expr<'src>>,
-    globals: HashMap<String, Value<'src>>,
-) -> Result<(), Error> {
+    globals: &mut HashMap<String, Variable<'src>>,
+) -> (Result<Value<'src>, Error>, Vec<(&'src str, Variable<'src>)>) {
     let mut stack = vec![];
-    let result = eval(&expression, &mut stack, &globals)?;
-    println!(
-        "{:?} was resulting value\n\n{:?} was the resulting stack",
-        result, stack
-    );
-    Ok(())
+    (eval(&expression, &mut stack, globals), stack)
 }
