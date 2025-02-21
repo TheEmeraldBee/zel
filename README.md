@@ -14,8 +14,6 @@ if name == "" {
 	print("please input a name!")
 } else if name == "E" {
 	print("Hey you can't have that name, I've claimed that one!")
-} else if name == "Josie" {
-	print("Hello my love!");
 } else if name == "Brighton" {
 	print("Hey! We have the same name!")
 } else {
