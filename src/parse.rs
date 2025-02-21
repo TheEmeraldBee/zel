@@ -34,6 +34,8 @@ pub enum Expr<'src> {
 
     Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
 
+    Block(Box<Spanned<Self>>, Box<Spanned<Self>>),
+
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
 
     If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
@@ -51,6 +53,16 @@ where
         let block = expr
             .clone()
             .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}')))
+            .then(expr.clone().or_not())
+            .map_with(|(a, b), e| {
+                (
+                    Expr::Block(
+                        Box::new(a),
+                        Box::new(b.unwrap_or_else(|| (Expr::Value(Value::Null), e.span()))),
+                    ),
+                    e.span(),
+                )
+            })
             .recover_with(via_parser(nested_delimiters(
                 Token::Ctrl('{'),
                 Token::Ctrl('}'),

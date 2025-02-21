@@ -229,6 +229,13 @@ pub fn eval<'src>(
             eval(&b, context)?
         }
 
+        Expr::Block(a, b) => {
+            context.push_scope(false);
+            eval(&a, context)?;
+            context.pop_scope();
+            eval(&b, context)?
+        }
+
         Expr::Func(args, body) => Value::Func(args.clone(), body.clone()),
 
         Expr::Call(func, inputted_args) => {
