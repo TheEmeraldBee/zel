@@ -16,6 +16,102 @@ impl Error {
     }
 }
 
+pub struct Context<'src> {
+    vars: Vec<(bool, HashMap<&'src str, Variable<'src>>)>,
+    globals: HashMap<&'src str, Value<'src>>,
+}
+
+impl<'src> Default for Context<'src> {
+    fn default() -> Self {
+        Self::new(HashMap::new(), HashMap::new(), false)
+    }
+}
+
+impl<'src> Context<'src> {
+    pub fn new(
+        vars: HashMap<&'src str, Variable<'src>>,
+        globals: HashMap<&'src str, Value<'src>>,
+        exclusive: bool,
+    ) -> Self {
+        Self {
+            vars: vec![(exclusive, vars)],
+            globals,
+        }
+    }
+
+    pub fn insert_global(&mut self, ident: &'src str, val: Value<'src>) {
+        self.globals.insert(ident, val);
+    }
+
+    pub fn get_global(&self, ident: &'src str) -> Option<&Value<'src>> {
+        self.globals.get(ident)
+    }
+
+    pub fn get_global_mut(&mut self, ident: &'src str) -> Option<&mut Value<'src>> {
+        self.globals.get_mut(ident)
+    }
+
+    pub fn push_scope(&mut self, exclusive: bool) {
+        self.vars.push((exclusive, HashMap::new()));
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.vars.pop();
+    }
+
+    pub fn push_var(&mut self, ident: &'src str, var: Variable<'src>) {
+        self.vars
+            .last_mut()
+            .expect("Stack should have at least one scope")
+            .1
+            .insert(ident, var);
+    }
+
+    pub fn get_var(&self, ident: &'src str) -> Option<&Variable<'src>> {
+        let vars = self
+            .vars
+            .last()
+            .expect("Stack should have at least one scope");
+        if vars.0 {
+            vars.1.get(ident)
+        } else {
+            self.vars
+                .iter()
+                .rfind(|x| x.1.contains_key(ident))
+                .and_then(|x| x.1.get(ident))
+        }
+    }
+
+    pub fn get_var_mut(&mut self, ident: &'src str) -> Option<&mut Variable<'src>> {
+        if self
+            .vars
+            .last()
+            .expect("Stack should have at least one scope")
+            .0
+        {
+            self.vars
+                .last_mut()
+                .expect("Stack should have at least one scope")
+                .1
+                .get_mut(ident)
+        } else {
+            self.vars
+                .iter_mut()
+                .rfind(|x| x.1.contains_key(ident))
+                .and_then(|x| x.1.get_mut(ident))
+        }
+    }
+
+    pub fn print_scope(&mut self) {
+        self.vars
+            .last()
+            .unwrap()
+            .1
+            .iter()
+            .for_each(|(key, value)| println!("{} = {:?}", key, value));
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Variable<'src> {
     pub mutable: bool,
@@ -34,10 +130,9 @@ impl<'src> Variable<'src> {
     }
 }
 
-fn eval<'src>(
+pub fn eval<'src>(
     expression: &Spanned<Expr<'src>>,
-    stack: &mut Vec<(&'src str, Variable<'src>)>,
-    globals: &mut HashMap<String, Variable<'src>>,
+    context: &mut Context<'src>,
 ) -> Result<Value<'src>, Error> {
     Ok(match &expression.0 {
         Expr::Error => unreachable!("This cannot exist in valid ast"),
@@ -45,123 +140,128 @@ fn eval<'src>(
         Expr::List(items) => Value::List(
             items
                 .iter()
-                .map(|exp| eval(exp, stack, globals))
+                .map(|exp| eval(exp, context))
                 .collect::<Result<_, _>>()?,
         ),
 
         Expr::Binary(lhs, op, rhs) => match op {
             // Math
-            BinaryOp::Add => eval(lhs, stack, globals)?.add(&eval(rhs, stack, globals)?),
-            BinaryOp::Sub => eval(lhs, stack, globals)?.sub(&eval(rhs, stack, globals)?),
-            BinaryOp::Mul => eval(lhs, stack, globals)?.mul(&eval(rhs, stack, globals)?),
-            BinaryOp::Div => eval(lhs, stack, globals)?.div(&eval(rhs, stack, globals)?),
+            BinaryOp::Add => eval(lhs, context)?.add(&eval(rhs, context)?),
+            BinaryOp::Sub => eval(lhs, context)?.sub(&eval(rhs, context)?),
+            BinaryOp::Mul => eval(lhs, context)?.mul(&eval(rhs, context)?),
+            BinaryOp::Div => eval(lhs, context)?.div(&eval(rhs, context)?),
 
             // Comparison
-            BinaryOp::Eq => eval(lhs, stack, globals)?
-                .eq(&eval(rhs, stack, globals)?)
+            BinaryOp::Eq => eval(lhs, context)?
+                .eq(&eval(rhs, context)?)
                 .map(Value::Bool),
-            BinaryOp::NotEq => eval(lhs, stack, globals)?
-                .ne(&eval(rhs, stack, globals)?)
+            BinaryOp::NotEq => eval(lhs, context)?
+                .ne(&eval(rhs, context)?)
                 .map(Value::Bool),
-            BinaryOp::Less => eval(lhs, stack, globals)?
-                .lt(&eval(rhs, stack, globals)?)
+            BinaryOp::Less => eval(lhs, context)?
+                .lt(&eval(rhs, context)?)
                 .map(Value::Bool),
-            BinaryOp::LessEq => eval(lhs, stack, globals)?
-                .lte(&eval(rhs, stack, globals)?)
+            BinaryOp::LessEq => eval(lhs, context)?
+                .lte(&eval(rhs, context)?)
                 .map(Value::Bool),
-            BinaryOp::Greater => eval(lhs, stack, globals)?
-                .gt(&eval(rhs, stack, globals)?)
+            BinaryOp::Greater => eval(lhs, context)?
+                .gt(&eval(rhs, context)?)
                 .map(Value::Bool),
-            BinaryOp::GreaterEq => eval(lhs, stack, globals)?
-                .gte(&eval(rhs, stack, globals)?)
+            BinaryOp::GreaterEq => eval(lhs, context)?
+                .gte(&eval(rhs, context)?)
                 .map(Value::Bool),
 
             // Boolean Checks
-            BinaryOp::Or => eval(lhs, stack, globals)?
-                .or(&eval(rhs, stack, globals)?)
+            BinaryOp::Or => eval(lhs, context)?
+                .or(&eval(rhs, context)?)
                 .map(Value::Bool),
-            BinaryOp::And => eval(lhs, stack, globals)?
-                .and(&eval(rhs, stack, globals)?)
+            BinaryOp::And => eval(lhs, context)?
+                .and(&eval(rhs, context)?)
                 .map(Value::Bool),
         }
         .map_err(|e| Error::new(expression.1, e))?,
 
-        Expr::Local(ident) => {
-            stack
-                .iter()
-                .rev()
-                .find(|(l, _)| *l == *ident)
-                .map(|(_, v)| v.clone())
-                .or_else(|| globals.get(*ident).cloned())
-                .ok_or_else(|| {
-                    Error::new(expression.1, format!("Variable `{}` does not exist", ident))
-                })?
-                .val
-        }
+        Expr::Local(ident) => context
+            .get_var(ident)
+            .map(|x| &x.val)
+            .or_else(|| context.get_global(ident))
+            .ok_or_else(|| {
+                Error::new(expression.1, format!("Variable `{}` does not exist", ident))
+            })?
+            .clone(),
 
         Expr::Var(ident, val, next) => {
-            let val = eval(&val, stack, globals)?;
-            stack.push((ident, Variable::mutable(val)));
-            eval(&next, stack, globals)?
+            let val = eval(&val, context)?;
+            context.push_var(ident, Variable::mutable(val));
+            eval(&next, context)?
         }
 
         Expr::Const(ident, val, next) => {
-            let val = eval(&val, stack, globals)?;
-            stack.push((ident, Variable::immutable(val)));
-            eval(&next, stack, globals)?
+            let val = eval(&val, context)?;
+            context.push_var(ident, Variable::immutable(val));
+            eval(&next, context)?
         }
 
         Expr::Set(ident, val, next) => {
-            let val = eval(&val, stack, globals)?;
+            let val = eval(&val, context)?;
 
-            let var = stack.iter_mut().find(|x| x.0 == *ident).ok_or_else(|| {
+            let var = context.get_var_mut(ident).ok_or_else(|| {
                 Error::new(
                     expression.1,
                     format!("Variable `{}` not initialized!", ident),
                 )
             })?;
 
-            if !var.1.mutable {
+            if !var.mutable {
                 return Err(Error::new(
                     expression.1,
                     format!("Variable `{}` is not mutable!", ident),
                 ));
             }
 
-            var.1.val = val;
+            var.val = val;
 
-            eval(&next, stack, globals)?
+            eval(&next, context)?
         }
 
         Expr::Then(a, b) => {
-            eval(&a, stack, globals)?;
-            eval(&b, stack, globals)?
+            eval(&a, context)?;
+            eval(&b, context)?
         }
 
         Expr::Func(args, body) => Value::Func(args.clone(), body.clone()),
 
         Expr::Call(func, inputted_args) => {
-            let func_val = eval(&func, stack, globals)?;
+            let func_val = eval(&func, context)?;
             match func_val {
                 Value::Func(args, body) => {
-                    let mut stack = if inputted_args.0.len() != args.len() {
+                    let eval_args = if inputted_args.0.len() != args.len() {
                         return Err(Error::new(expression.1, format!("Trying to call function `{:?}`, but provided `{}` arguments and expected `{}` arguments.", func.0, inputted_args.0.len(), args.len())));
                     } else {
                         args.iter()
                             .zip(inputted_args.0.iter())
                             .map(|(name, arg)| {
-                                Ok((*name, Variable::immutable(eval(arg, stack, globals)?)))
+                                Ok((*name, Variable::immutable(eval(arg, context)?)))
                             })
-                            .collect::<Result<_, _>>()?
+                            .collect::<Result<Vec<_>, _>>()?
                     };
 
-                    eval(&body, &mut stack, globals)?
+                    context.push_scope(true);
+
+                    for (name, val) in eval_args {
+                        context.push_var(name, val);
+                    }
+
+                    let val = eval(&body, context)?;
+
+                    context.pop_scope();
+                    val
                 }
                 Value::Rust(func) => {
                     let parsed_args = inputted_args
                         .0
                         .iter()
-                        .map(|arg| Ok(eval(arg, stack, globals)?))
+                        .map(|arg| Ok(eval(arg, context)?))
                         .collect::<Result<_, _>>()?;
 
                     (**func)(expression.1, parsed_args)?
@@ -176,25 +276,20 @@ fn eval<'src>(
         }
 
         Expr::If(cond, a, b) => {
-            let c = eval(cond, stack, globals)?;
-            match c {
-                Value::Bool(true) => eval(a, stack, globals)?,
-                Value::Bool(false) => eval(b, stack, globals)?,
+            let c = eval(cond, context)?;
+            context.push_scope(false);
+            let res = match c {
+                Value::Bool(true) => eval(a, context)?,
+                Value::Bool(false) => eval(b, context)?,
                 c => {
                     return Err(Error::new(
                         expression.1,
                         format!("Conditions must result in booleans, found `{c}`"),
                     ))
                 }
-            }
+            };
+            context.pop_scope();
+            res
         }
     })
-}
-
-pub fn eval_expr<'src>(
-    expression: Spanned<Expr<'src>>,
-    globals: &mut HashMap<String, Variable<'src>>,
-) -> (Result<Value<'src>, Error>, Vec<(&'src str, Variable<'src>)>) {
-    let mut stack = vec![];
-    (eval(&expression, &mut stack, globals), stack)
 }

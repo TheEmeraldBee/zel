@@ -1,18 +1,14 @@
-// Read User's Name
-var x = 4;
-x = 5;
+const hello = fn(name) {
+	print("Hello ", name);
+};
 
-print("Input your name:");
-const name = read_line();
+const user = read_line();
+hello(user);
 
-if name == "" {
-	print("please input a name!")
-} else if name == "E" {
-	print("Hey you can't have that name, I've claimed that one!")
-} else if name == "Josie" {
-	print("Hello my love!");
-} else if name == "Brighton" {
-	print("Hey! We have the same name!")
-} else {
-	print("Nice to meet you, ", name)
-}
+var x = 5;
+if user == "Brighton" {
+	print("Admin user logged in");
+	x = 4;
+};
+
+print(x);

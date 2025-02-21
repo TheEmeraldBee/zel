@@ -1,9 +1,8 @@
 use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
+use eval::Context;
 use eval::Error;
-use eval::Variable;
 
-use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::rc::Rc;
@@ -20,7 +19,7 @@ pub mod parse;
 use parse::{parser, BinaryOp, Expr};
 
 pub mod eval;
-use eval::eval_expr;
+use eval::eval;
 
 fn main() {
     let filename = env::args().nth(1).expect("Expected file argument");
@@ -28,21 +27,21 @@ fn main() {
 
     let (tokens, mut errs) = lexer::lexer().parse(src.as_str()).into_output_errors();
 
-    let mut globals = HashMap::new();
-    globals.insert(
-        "print".to_string(),
-        Variable::immutable(Value::Rust(Rc::new(Box::new(|_, args| {
+    let mut ctx = Context::default();
+    ctx.insert_global(
+        "print",
+        Value::Rust(Rc::new(Box::new(|_, args| {
             for arg in &args {
                 print!("{}", arg);
             }
             println!();
             Ok(Value::Null)
-        })))),
+        }))),
     );
 
-    globals.insert(
-        "read_line".to_string(),
-        Variable::immutable(Value::Rust(Rc::new(Box::new(|span, args| {
+    ctx.insert_global(
+        "read_line",
+        Value::Rust(Rc::new(Box::new(|span, args| {
             if !args.is_empty() {
                 return Err(Error::new(span, "read_line should not have any arguments!"));
             }
@@ -54,7 +53,7 @@ fn main() {
             s = s.trim().to_string();
 
             Ok(Value::Str(s))
-        })))),
+        }))),
     );
 
     let parse_errs = if let Some(tokens) = &tokens {
@@ -68,7 +67,7 @@ fn main() {
             .into_output_errors();
 
         if let Some((ast, _file_span)) = ast.filter(|_| errs.is_empty() && parse_errs.is_empty()) {
-            match eval_expr(ast, &mut globals).0 {
+            match eval(&ast, &mut ctx) {
                 Ok(_) => println!("\n\nCode successfully exited"),
                 Err(e) => errs.push(Rich::custom(e.span, e.msg)),
             }
