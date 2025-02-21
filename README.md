@@ -1,5 +1,18 @@
-# Jos: A language with the goal of making writing code more fun!
+# Zel: A language with the goal of making writing code more fun!
 This language is my personal "perfect" language, but I would love to hear your feedback.
+
+## Progress
+This project is currently in **HEAVY** development, meaning that it is being worked on, and is in an unusable state
+There are constant changes, and nothing is currently compiled, meaning the entire language is interpreted.
+
+## Milestones
+- [x] Parsing Of Basic Language Features
+- [x] Basic Evaluation
+- [x] Basic Scope
+- [ ] Simple Implementation for Main function, and code in root of file being seperate (const variables **ONLY**)
+- [ ] Code Validation before interpretation
+- [ ] Type Checking
+- [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
 
 ## Example
 ```
