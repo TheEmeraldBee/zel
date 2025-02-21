@@ -3,52 +3,24 @@ This language is my personal "perfect" language, but I would love to hear your f
 
 ## Example
 ```
-var myvar = 12i8; // Create a basic variable
-myvar = 5; // Works! the `var` keyword means that variables are mutable!
+// Read User's Name
+var x = 4;
+x = 5;
 
-const myvar = 12i8; // Create a basic variable with const
-myvar = 5; // Doesn't work! the `const` keyword means that variables are immutable!
+print("Input your name:");
+const name = read_line();
 
-// Type Aliasing!
-const MyType = u32;
-
-// Functions!
-const my_func = fn(name: string) {
-  print("Hello, {}!\n", name);
-};
-
-// Create a template
-const MyTemplate = temp {
-  const say_hi: fn(*self);
-};
-
-mut var MyMutableFunction = fn(title: string) {
-  print("the book's name is {}", title);
+if name == "" {
+	print("please input a name!")
+} else if name == "E" {
+	print("Hey you can't have that name, I've claimed that one!")
+} else if name == "Josie" {
+	print("Hello my love!");
+} else if name == "Brighton" {
+	print("Hey! We have the same name!")
+} else {
+	print("Nice to meet you, ", name)
 }
-
-// Create a struct
-const MyType = struct(MyTemplate) {
-  name: string,
-
-  const say_hi = fn(*self) {
-    print("Hello!");
-  }
-};
-
-const my_template_func = fn(user: *MyTemplate) {
-  user.say_hi()
-}
-
-// Closures
-const hi = fn() {print("Hello, world!")};
-hi();
-
-fn() {print("hello, world!")}();
-
-// Use file
-const my_file = use hello_world;
-const my_file = use hello_world_me.zl;
-
 ```
 
 ## Language Definition
