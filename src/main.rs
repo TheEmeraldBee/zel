@@ -2,6 +2,9 @@ use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
 use eval::Context;
 use eval::Error;
+use eval::Variable;
+use semantic::analyze_top_level;
+use semantic::TopLevel;
 
 use std::env;
 use std::fs;
@@ -18,6 +21,8 @@ use value::Value;
 pub mod parse;
 use parse::{parser, BinaryOp, Expr};
 
+pub mod semantic;
+
 pub mod eval;
 use eval::eval;
 
@@ -30,18 +35,18 @@ fn main() {
     let mut ctx = Context::default();
     ctx.insert_global(
         "print",
-        Value::Rust(Rc::new(Box::new(|_, args| {
+        Variable::immutable(Value::Rust(Rc::new(Box::new(|_, args| {
             for arg in &args {
                 print!("{}", arg);
             }
             println!();
             Ok(Value::Null)
-        }))),
+        })))),
     );
 
     ctx.insert_global(
         "read_line",
-        Value::Rust(Rc::new(Box::new(|span, args| {
+        Variable::immutable(Value::Rust(Rc::new(Box::new(|span, args| {
             if !args.is_empty() {
                 return Err(Error::new(span, "read_line should not have any arguments!"));
             }
@@ -53,7 +58,24 @@ fn main() {
             s = s.trim().to_string();
 
             Ok(Value::Str(s))
-        }))),
+        })))),
+    );
+
+    ctx.insert_global(
+        "read_num",
+        Variable::immutable(Value::Rust(Rc::new(Box::new(|span, args| {
+            if !args.is_empty() {
+                return Err(Error::new(span, "read_line should not have any arguments!"));
+            }
+
+            let mut s = String::new();
+
+            std::io::stdin().read_line(&mut s).unwrap();
+
+            let num = s.trim().parse::<f64>().unwrap();
+
+            Ok(Value::Num(num))
+        })))),
     );
 
     let parse_errs = if let Some(tokens) = &tokens {
@@ -67,7 +89,20 @@ fn main() {
             .into_output_errors();
 
         if let Some((ast, _file_span)) = ast.filter(|_| errs.is_empty() && parse_errs.is_empty()) {
-            match eval(&ast, &mut ctx) {
+            let mut top_level = TopLevel::default();
+            match analyze_top_level(&ast, &mut top_level) {
+                Ok(_) => (),
+                Err(e) => errs.push(Rich::custom(e.span, e.msg)),
+            }
+
+            ctx.insert_top_level(top_level);
+
+            let main_expr = (
+                Expr::Call(Box::new((Expr::Local("main"), ast.1)), (Vec::new(), ast.1)),
+                ast.1,
+            );
+
+            match eval(&main_expr, &mut ctx) {
                 Ok(_) => println!("\n\nCode successfully exited"),
                 Err(e) => errs.push(Rich::custom(e.span, e.msg)),
             }

@@ -43,7 +43,7 @@ impl<'src> Value<'src> {
         match (self, rhs) {
             (Value::Null, Value::Null) => Err(format!("Cannot subtract null values")),
             (Value::Bool(_), Value::Bool(_)) => Err(format!("Cannot subtract booleans")),
-            (Value::Num(a), Value::Num(b)) => Ok(Value::Num(a + b)),
+            (Value::Num(a), Value::Num(b)) => Ok(Value::Num(a - b)),
             (Value::Str(_), Value::Str(_)) => Err(format!("Cannot subtract strings")),
             (Value::List(_), Value::List(_)) => Err(format!("Cannot subtract lists")),
             (Value::Func(_, _), Value::Func(_, _)) => Err(format!("Cannot subtract functions")),

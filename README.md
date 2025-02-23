@@ -9,12 +9,12 @@ There are constant changes, and nothing is currently compiled, meaning the entir
 - [x] Parsing Of Basic Language Features
 - [x] Basic Evaluation
 - [x] Basic Scope
-- [ ] Simple Implementation for Main function, and code in root of file being seperate (const variables **ONLY**)
+- [x] Simple Implementation for Main function, and code in root of file being seperate (const variables **ONLY**) Using Top-Level definition checking to get this
 - [ ] Code Validation before interpretation
 - [ ] Type Checking
 - [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
 
-## Example
+## Up to date Example
 ```
 // Read User's Name
 var x = 4;

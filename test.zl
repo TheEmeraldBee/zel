@@ -1,19 +1,17 @@
-const hello = fn(name) {
-	print("Hello ", name);
+// Because of the top level being "global", you may use recursion to run functions!
+const fib = fn(n) {
+	if n <= 1 {
+		n
+	} else {
+		fib(n - 1) + fib(n - 2)
+	}
 };
 
-const user = read_line();
-hello(user);
+const hi = fn() {};
 
-var x = 5;
-if user == "Brighton" {
-	print("Admin user logged in");
-	var x = 4;
+// The main entrypoint of the code
+const main = fn() {
+ 	print("Please type a number:");
+	const num = read_num();
+	print(fib(num));
 };
-
-{
-	var x = 10;
-	print("x in scope: ", x);
-}
-
-print(x);

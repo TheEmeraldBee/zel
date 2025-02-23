@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{BinaryOp, Expr, Span, Spanned, Value};
+use crate::{semantic::TopLevel, BinaryOp, Expr, Span, Spanned, Value};
 
 pub struct Error {
     pub span: Span,
@@ -16,9 +16,11 @@ impl Error {
     }
 }
 
+#[derive(Debug)]
 pub struct Context<'src> {
+    top_level: HashMap<&'src str, Variable<'src>>,
     vars: Vec<(bool, HashMap<&'src str, Variable<'src>>)>,
-    globals: HashMap<&'src str, Value<'src>>,
+    globals: HashMap<&'src str, Variable<'src>>,
 }
 
 impl<'src> Default for Context<'src> {
@@ -30,25 +32,68 @@ impl<'src> Default for Context<'src> {
 impl<'src> Context<'src> {
     pub fn new(
         vars: HashMap<&'src str, Variable<'src>>,
-        globals: HashMap<&'src str, Value<'src>>,
+        globals: HashMap<&'src str, Variable<'src>>,
         exclusive: bool,
     ) -> Self {
         Self {
+            top_level: HashMap::new(),
             vars: vec![(exclusive, vars)],
             globals,
         }
     }
 
-    pub fn insert_global(&mut self, ident: &'src str, val: Value<'src>) {
+    pub fn find(&self, ident: &'src str) -> Option<&Variable<'src>> {
+        self.top_level
+            .get(ident)
+            .or_else(|| self.globals.get(ident))
+            .or_else(|| {
+                let vars = self
+                    .vars
+                    .last()
+                    .expect("Stack should have at least one scope");
+                if vars.0 {
+                    vars.1.get(ident)
+                } else {
+                    self.vars
+                        .iter()
+                        .rfind(|x| x.1.contains_key(ident))
+                        .and_then(|x| x.1.get(ident))
+                }
+            })
+    }
+    pub fn find_mut(&mut self, ident: &'src str) -> Option<&mut Variable<'src>> {
+        self.top_level
+            .get_mut(ident)
+            .or_else(|| self.globals.get_mut(ident))
+            .or_else(|| {
+                if self
+                    .vars
+                    .last()
+                    .expect("Stack should have at least one scope")
+                    .0
+                {
+                    self.vars
+                        .last_mut()
+                        .expect("Stack should have at least one scope")
+                        .1
+                        .get_mut(ident)
+                } else {
+                    self.vars
+                        .iter_mut()
+                        .rfind(|x| x.1.contains_key(ident))
+                        .and_then(|x| x.1.get_mut(ident))
+                }
+            })
+    }
+
+    pub fn insert_top_level(&mut self, top_level: TopLevel<'src>) {
+        for (key, value) in top_level.vars.into_iter() {
+            self.top_level.insert(key, Variable::const_expr(value));
+        }
+    }
+
+    pub fn insert_global(&mut self, ident: &'src str, val: Variable<'src>) {
         self.globals.insert(ident, val);
-    }
-
-    pub fn get_global(&self, ident: &'src str) -> Option<&Value<'src>> {
-        self.globals.get(ident)
-    }
-
-    pub fn get_global_mut(&mut self, ident: &'src str) -> Option<&mut Value<'src>> {
-        self.globals.get_mut(ident)
     }
 
     pub fn push_scope(&mut self, exclusive: bool) {
@@ -66,66 +111,60 @@ impl<'src> Context<'src> {
             .1
             .insert(ident, var);
     }
+}
 
-    pub fn get_var(&self, ident: &'src str) -> Option<&Variable<'src>> {
-        let vars = self
-            .vars
-            .last()
-            .expect("Stack should have at least one scope");
-        if vars.0 {
-            vars.1.get(ident)
-        } else {
-            self.vars
-                .iter()
-                .rfind(|x| x.1.contains_key(ident))
-                .and_then(|x| x.1.get(ident))
-        }
-    }
-
-    pub fn get_var_mut(&mut self, ident: &'src str) -> Option<&mut Variable<'src>> {
-        if self
-            .vars
-            .last()
-            .expect("Stack should have at least one scope")
-            .0
-        {
-            self.vars
-                .last_mut()
-                .expect("Stack should have at least one scope")
-                .1
-                .get_mut(ident)
-        } else {
-            self.vars
-                .iter_mut()
-                .rfind(|x| x.1.contains_key(ident))
-                .and_then(|x| x.1.get_mut(ident))
-        }
-    }
-
-    pub fn print_scope(&mut self) {
-        self.vars
-            .last()
-            .unwrap()
-            .1
-            .iter()
-            .for_each(|(key, value)| println!("{} = {:?}", key, value));
-    }
+#[derive(Debug, Clone)]
+pub enum VariableInfo<'src> {
+    Value(Value<'src>),
+    Expr(Spanned<Expr<'src>>),
 }
 
 #[derive(Debug, Clone)]
 pub struct Variable<'src> {
     pub mutable: bool,
-    pub val: Value<'src>,
+    val: VariableInfo<'src>,
 }
 
 impl<'src> Variable<'src> {
     pub fn mutable(val: Value<'src>) -> Self {
-        Self { mutable: true, val }
+        Self {
+            mutable: true,
+            val: VariableInfo::Value(val),
+        }
     }
     pub fn immutable(val: Value<'src>) -> Self {
         Self {
             mutable: false,
-            val,
+            val: VariableInfo::Value(val),
+        }
+    }
+
+    pub fn const_expr(expr: Spanned<Expr<'src>>) -> Self {
+        Self {
+            mutable: false,
+            val: VariableInfo::Expr(expr),
+        }
+    }
+
+    pub fn as_value(&self, context: &mut Context<'src>) -> Result<Value<'src>, Error> {
+        context.push_scope(true);
+
+        let value = match &self.val {
+            VariableInfo::Value(v) => v.clone(),
+            VariableInfo::Expr(expr) => eval(&expr, context)?,
+        };
+
+        context.pop_scope();
+
+        Ok(value)
+    }
+
+    pub fn as_expr(&self) -> Result<&Spanned<Expr<'src>>, String> {
+        match &self.val {
+            VariableInfo::Value(_) => Err(format!(
+                "Failed to find main in top_level, as it is a value and not an expression!"
+            )),
+            VariableInfo::Expr(e) => Ok(&e),
         }
     }
 }
@@ -182,13 +221,12 @@ pub fn eval<'src>(
         .map_err(|e| Error::new(expression.1, e))?,
 
         Expr::Local(ident) => context
-            .get_var(ident)
-            .map(|x| &x.val)
-            .or_else(|| context.get_global(ident))
+            .find(ident)
             .ok_or_else(|| {
                 Error::new(expression.1, format!("Variable `{}` does not exist", ident))
             })?
-            .clone(),
+            .clone()
+            .as_value(context)?,
 
         Expr::Var(ident, val, next) => {
             let val = eval(&val, context)?;
@@ -205,7 +243,7 @@ pub fn eval<'src>(
         Expr::Set(ident, val, next) => {
             let val = eval(&val, context)?;
 
-            let var = context.get_var_mut(ident).ok_or_else(|| {
+            let var = context.find_mut(ident).ok_or_else(|| {
                 Error::new(
                     expression.1,
                     format!("Variable `{}` not initialized!", ident),
@@ -219,7 +257,7 @@ pub fn eval<'src>(
                 ));
             }
 
-            var.val = val;
+            *var = Variable::mutable(val);
 
             eval(&next, context)?
         }
@@ -262,6 +300,7 @@ pub fn eval<'src>(
                     let val = eval(&body, context)?;
 
                     context.pop_scope();
+
                     val
                 }
                 Value::Rust(func) => {

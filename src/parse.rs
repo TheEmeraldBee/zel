@@ -52,17 +52,9 @@ where
     recursive(|expr| {
         let block = expr
             .clone()
+            .or_not()
             .delimited_by(just(Token::Ctrl('{')), just(Token::Ctrl('}')))
-            .then(expr.clone().or_not())
-            .map_with(|(a, b), e| {
-                (
-                    Expr::Block(
-                        Box::new(a),
-                        Box::new(b.unwrap_or_else(|| (Expr::Value(Value::Null), e.span()))),
-                    ),
-                    e.span(),
-                )
-            })
+            .map_with(|a, e| a.unwrap_or_else(|| (Expr::Value(Value::Null), e.span())))
             .recover_with(via_parser(nested_delimiters(
                 Token::Ctrl('{'),
                 Token::Ctrl('}'),
@@ -133,7 +125,7 @@ where
                 .then_ignore(just(Token::Ctrl(';')))
                 .then(expr.clone().or_not())
                 .map_with(|((name, val), body), e| {
-                    Expr::Var(
+                    Expr::Const(
                         name,
                         Box::new(val),
                         Box::new(body.unwrap_or_else(|| (Expr::Value(Value::Null), e.span()))),
