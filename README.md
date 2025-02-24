@@ -10,28 +10,33 @@ There are constant changes, and nothing is currently compiled, meaning the entir
 - [x] Basic Evaluation
 - [x] Basic Scope
 - [x] Simple Implementation for Main function, and code in root of file being seperate (const variables **ONLY**) Using Top-Level definition checking to get this
-- [ ] Code Validation before interpretation
-- [ ] Type Checking
+- [ ] Make functions self aware. (Meaning that functions are aware of their own definition, and can be called recursively without being in top level)
+- [ ] Code Validation before interpretation (Make sure that variables exist for now before code is executed)
+- [ ] Type Checking (Basic typing, this is a big one baby :))
 - [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
 
 ## Up to date Example
 ```
-// Read User's Name
-var x = 4;
-x = 5;
+// Because of the top level being "global", you may use recursion to run functions!
+const fib = fn(n) {
+	if n <= 1 {
+		n
+	} else {
+		fib(n - 1) + fib(n - 2)
+	}
+};
 
-print("Input your name:");
-const name = read_line();
+// The main entrypoint of the code
+const main = fn() {
 
-if name == "" {
-	print("please input a name!")
-} else if name == "E" {
-	print("Hey you can't have that name, I've claimed that one!")
-} else if name == "Brighton" {
-	print("Hey! We have the same name!")
-} else {
-	print("Nice to meet you, ", name)
-}
+  // Print prompt and read user input numeber.
+ 	print("Please type a number:");
+	const num = read_num();
+
+  // Print the fib result of the function
+	print(fib(num));
+};
+
 ```
 
 ## Language Definition

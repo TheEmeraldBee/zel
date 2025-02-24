@@ -7,8 +7,6 @@ const fib = fn(n) {
 	}
 };
 
-const hi = fn() {};
-
 // The main entrypoint of the code
 const main = fn() {
  	print("Please type a number:");
