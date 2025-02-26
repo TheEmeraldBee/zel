@@ -86,6 +86,19 @@ impl<'src> Value<'src> {
         }
     }
 
+    pub fn neg(&self) -> Result<Value<'src>, String> {
+        match self {
+            Value::Num(a) => Ok(Value::Num(-a)),
+            _ => Err(format!("Cannot neg `{}`, as it isn't a number!", self)),
+        }
+    }
+    pub fn not(&self) -> Result<Value<'src>, String> {
+        match self {
+            Value::Bool(a) => Ok(Value::Bool(!a)),
+            _ => Err(format!("Cannot invert `{}`, as it isn't a boolean!", self)),
+        }
+    }
+
     pub fn eq(&self, rhs: &Self) -> Result<bool, String> {
         match (self, rhs) {
             (Value::Null, Value::Null) => Err(format!("Cannot compare null values")),

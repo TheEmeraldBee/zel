@@ -5,6 +5,12 @@ use chumsky::input::ValueInput;
 use chumsky::prelude::*;
 
 #[derive(Clone, Debug)]
+pub enum MonadicOp {
+    Neg,
+    Not,
+}
+
+#[derive(Clone, Debug)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -37,6 +43,7 @@ pub enum Expr<'src> {
     Block(Box<Spanned<Self>>, Box<Spanned<Self>>),
 
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
+    Monary(Box<Spanned<Self>>, MonadicOp),
 
     If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
     For(Box<Spanned<Self>>, Box<Spanned<Self>>),
@@ -52,6 +59,8 @@ where
     I: ValueInput<'src, Token = Token<'src>, Span = Span>,
 {
     recursive(|expr| {
+        let ident = select! { Token::Ident(ident) => ident }.labelled("identifier");
+
         let block = expr
             .clone()
             .or_not()
@@ -88,12 +97,12 @@ where
                 })
         });
 
-        let for_ = just(Token::For)
+        let while_ = just(Token::For)
             .ignore_then(expr.clone())
             .then(block.clone())
             .map_with(|(cond, block), e| (Expr::For(Box::new(cond), Box::new(block)), e.span()));
 
-        let block_expr = block.clone().or(if_.clone()).or(for_.clone());
+        let block_expr = block.clone().or(if_.clone()).or(while_.clone());
 
         let inline_expr = recursive(|inline_expr| {
             let val = select! {
@@ -102,8 +111,6 @@ where
                 Token::Str(x) => Expr::Value(Value::Str(x.to_string())),
             }
             .labelled("value");
-
-            let ident = select! { Token::Ident(ident) => ident }.labelled("identifier");
 
             let items = expr
                 .clone()
@@ -211,6 +218,22 @@ where
             );
 
             let ops = [
+                just(Token::Op("-")).to(MonadicOp::Neg).boxed(),
+                just(Token::Op("!")).to(MonadicOp::Not).boxed(),
+            ];
+
+            let mut mon_op = call.clone().boxed();
+
+            for op in ops {
+                mon_op = op
+                    .repeated()
+                    .foldr_with(mon_op.clone(), |op, a, e| {
+                        (Expr::Monary(Box::new(a), op), e.span())
+                    })
+                    .boxed();
+            }
+
+            let ops = [
                 just(Token::Op("*"))
                     .to(BinaryOp::Mul)
                     .or(just(Token::Op("/")).to(BinaryOp::Div))
@@ -232,7 +255,7 @@ where
                 just(Token::Op("&&")).to(BinaryOp::And).boxed(),
             ];
 
-            let mut bin_op = call.clone().boxed();
+            let mut bin_op = mon_op.clone().boxed();
 
             for op in ops {
                 bin_op = bin_op

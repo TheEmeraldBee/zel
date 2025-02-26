@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{semantic::TopLevel, BinaryOp, Expr, Span, Spanned, Value};
+use crate::{parse::MonadicOp, semantic::TopLevel, BinaryOp, Expr, Span, Spanned, Value};
 
 pub struct Error {
     pub span: Span,
@@ -217,6 +217,12 @@ pub fn eval<'src>(
             BinaryOp::And => eval(lhs, context)?
                 .and(&eval(rhs, context)?)
                 .map(Value::Bool),
+        }
+        .map_err(|e| Error::new(expression.1, e))?,
+
+        Expr::Monary(expr, op) => match op {
+            MonadicOp::Neg => eval(expr, context)?.neg(),
+            MonadicOp::Not => eval(expr, context)?.not(),
         }
         .map_err(|e| Error::new(expression.1, e))?,
 
