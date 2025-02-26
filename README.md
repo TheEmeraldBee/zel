@@ -11,7 +11,7 @@ There are constant changes, and nothing is currently compiled, meaning the entir
 - [x] Basic Scope
 - [x] Simple Implementation for Main function, and code in root of file being seperate (const variables **ONLY**) Using Top-Level definition checking to get this
 - [x] Add for loops, which allow for functions of for, while, and loop in rust
-- [ ] Make functions self aware. (Meaning that functions are aware of their own definition, and can be called recursively without being in top level)
+- [x] Make functions self aware. (Meaning that functions are aware of their own definition, and can be called recursively without being in top level)
 - [ ] Code Validation before interpretation (Make sure that variables exist for now before code is executed)
 - [ ] Type Checking (Basic typing, this is a big one baby :))
 - [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
