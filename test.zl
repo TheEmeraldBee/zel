@@ -9,6 +9,13 @@ const fib = fn(n) {
 
 // The main entrypoint of the code
 const main = fn() {
+	var i = 0;
+
+	for i < 50 {
+		i = i + 1;
+		print(i);
+	};
+
  	print("Please type a number:");
 	const num = read_num();
 	print(fib(num));

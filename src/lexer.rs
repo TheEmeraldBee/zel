@@ -15,6 +15,8 @@ pub enum Token<'src> {
     Var,
     Const,
 
+    For,
+
     If,
     Else,
 }
@@ -77,6 +79,8 @@ pub fn lexer<'src>(
 
         "var" => Token::Var,
         "const" => Token::Const,
+
+        "for" => Token::For,
 
         "if" => Token::If,
         "else" => Token::Else,

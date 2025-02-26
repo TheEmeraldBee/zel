@@ -39,6 +39,8 @@ pub enum Expr<'src> {
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
 
     If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
+    For(Box<Spanned<Self>>, Box<Spanned<Self>>),
+
     Call(Box<Spanned<Self>>, Spanned<Vec<Spanned<Self>>>),
 
     Func(Vec<&'src str>, Box<Spanned<Self>>),
@@ -86,7 +88,12 @@ where
                 })
         });
 
-        let block_expr = block.clone().or(if_.clone());
+        let for_ = just(Token::For)
+            .ignore_then(expr.clone())
+            .then(block.clone())
+            .map_with(|(cond, block), e| (Expr::For(Box::new(cond), Box::new(block)), e.span()));
+
+        let block_expr = block.clone().or(if_.clone()).or(for_.clone());
 
         let inline_expr = recursive(|inline_expr| {
             let val = select! {

@@ -337,5 +337,25 @@ pub fn eval<'src>(
             context.pop_scope();
             res
         }
+
+        Expr::For(cond, a) => {
+            let mut res = Value::Null;
+            loop {
+                let c = eval(cond, context)?;
+                context.push_scope(false);
+                match c {
+                    Value::Bool(true) => res = eval(a, context)?,
+                    Value::Bool(false) => break,
+                    c => {
+                        return Err(Error::new(
+                            expression.1,
+                            format!("Conditions must result in booleans, found `{c}`"),
+                        ))
+                    }
+                }
+                context.pop_scope();
+            }
+            res
+        }
     })
 }
