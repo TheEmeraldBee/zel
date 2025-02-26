@@ -35,19 +35,25 @@ pub enum Expr<'src> {
 
     Local(&'src str),
 
-    Var(&'src str, Box<Spanned<Self>>, Box<Spanned<Self>>),
-    Const(&'src str, Box<Spanned<Self>>, Box<Spanned<Self>>),
-    Set(&'src str, Box<Spanned<Self>>, Box<Spanned<Self>>),
+    Var(&'src str, Box<Spanned<Self>>),
+    Const(&'src str, Box<Spanned<Self>>),
+    Set(&'src str, Box<Spanned<Self>>),
 
     Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
 
-    Block(Box<Spanned<Self>>, Box<Spanned<Self>>),
+    Block(Box<Spanned<Self>>),
 
     Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
     Monary(Box<Spanned<Self>>, MonadicOp),
 
     If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
-    For(Box<Spanned<Self>>, Box<Spanned<Self>>),
+    For(
+        Box<Spanned<Self>>,
+        Box<Spanned<Self>>,
+        Box<Spanned<Self>>,
+        Box<Spanned<Self>>,
+    ),
+    While(Box<Spanned<Self>>, Box<Spanned<Self>>),
 
     Call(Box<Spanned<Self>>, Spanned<Vec<Spanned<Self>>>),
 
@@ -98,12 +104,7 @@ where
                 })
         });
 
-        let while_ = just(Token::For)
-            .ignore_then(expr.clone())
-            .then(block.clone())
-            .map_with(|(cond, block), e| (Expr::For(Box::new(cond), Box::new(block)), e.span()));
-
-        let block_expr = block.clone().or(if_.clone()).or(while_.clone());
+        let block_expr = choice([block.clone().boxed(), if_.boxed()]);
 
         let inline_expr = recursive(|inline_expr| {
             let val = select! {
@@ -123,42 +124,18 @@ where
                 .ignore_then(ident)
                 .then_ignore(just(Token::Op("=")))
                 .then(block_expr.clone().or(inline_expr.clone()))
-                .then_ignore(just(Token::Ctrl(';')))
-                .then(expr.clone().or_not())
-                .map_with(|((name, val), body), e| {
-                    Expr::Var(
-                        name,
-                        Box::new(val),
-                        Box::new(body.unwrap_or_else(|| (Expr::Value(Value::Null), e.span()))),
-                    )
-                });
+                .map(|(name, val)| Expr::Var(name, Box::new(val)));
 
             let const_ = just(Token::Const)
                 .ignore_then(ident)
                 .then_ignore(just(Token::Op("=")))
                 .then(block_expr.clone().or(inline_expr.clone()))
-                .then_ignore(just(Token::Ctrl(';')))
-                .then(expr.clone().or_not())
-                .map_with(|((name, val), body), e| {
-                    Expr::Const(
-                        name,
-                        Box::new(val),
-                        Box::new(body.unwrap_or_else(|| (Expr::Value(Value::Null), e.span()))),
-                    )
-                });
+                .map(|(name, val)| Expr::Const(name, Box::new(val)));
 
             let set = ident
                 .then_ignore(just(Token::Op("=")))
                 .then(block_expr.clone().or(inline_expr.clone()))
-                .then_ignore(just(Token::Ctrl(';')))
-                .then(expr.clone().or_not())
-                .map_with(|((name, val), body), e| {
-                    Expr::Set(
-                        name,
-                        Box::new(val),
-                        Box::new(body.unwrap_or_else(|| (Expr::Value(Value::Null), e.span()))),
-                    )
-                });
+                .map(|(name, val)| Expr::Set(name, Box::new(val)));
 
             let list = items
                 .clone()
@@ -270,6 +247,49 @@ where
             bin_op.labelled("expression").as_context()
         });
 
+        let loop_ = just(Token::For)
+            .ignore_then(block.clone())
+            .map_with(|block, e| {
+                (
+                    Expr::While(
+                        Box::new((Expr::Value(Value::Bool(true)), e.span())),
+                        Box::new(block),
+                    ),
+                    e.span(),
+                )
+            });
+
+        let while_ = just(Token::For)
+            .ignore_then(expr.clone())
+            .then(block.clone())
+            .map_with(|(cond, block), e| (Expr::While(Box::new(cond), Box::new(block)), e.span()));
+
+        let for_ = just(Token::For)
+            .ignore_then(inline_expr.clone())
+            .then_ignore(just(Token::Ctrl(';')))
+            .then(inline_expr.clone())
+            .then_ignore(just(Token::Ctrl(';')))
+            .then(inline_expr.clone())
+            .then(block.clone())
+            .map_with(|(((init, cond), each), body), e| {
+                (
+                    Expr::For(
+                        Box::new(init),
+                        Box::new(cond),
+                        Box::new(each),
+                        Box::new(body),
+                    ),
+                    e.span(),
+                )
+            });
+
+        let block_expr = choice([
+            block_expr.boxed(),
+            for_.boxed(),
+            while_.boxed(),
+            loop_.boxed(),
+        ]);
+
         let block_chain = block_expr
             .clone()
             .foldl_with(block_expr.clone().repeated(), |a, b, e| {
@@ -288,7 +308,7 @@ where
 
         block_chain
             .labelled("block")
-            .or(inline_expr.clone())
+            .or(inline_expr)
             .recover_with(skip_then_retry_until(
                 block_recovery.ignored(),
                 one_of([

@@ -14,9 +14,12 @@ pub fn analyze_top_level<'src>(
 ) -> Result<(), Error> {
     match &expr.0 {
         Expr::Error => unreachable!("This should already be handled"),
-        Expr::Const(ident, lhs, then) => {
-            top_level.vars.insert(ident, *lhs.clone());
-            analyze_top_level(then, top_level)?;
+        Expr::Const(ident, rhs) => {
+            top_level.vars.insert(ident, *rhs.clone());
+        }
+        Expr::Then(a, b) => {
+            analyze_top_level(a, top_level)?;
+            analyze_top_level(b, top_level)?;
         }
         Expr::Value(Value::Null) => {}
         _ => {

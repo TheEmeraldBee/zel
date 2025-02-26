@@ -234,19 +234,19 @@ pub fn eval<'src>(
             .clone()
             .as_value(context)?,
 
-        Expr::Var(ident, val, next) => {
+        Expr::Var(ident, val) => {
             let val = eval(&val, context)?;
             context.push_var(ident, Variable::mutable(val));
-            eval(&next, context)?
+            Value::Null
         }
 
-        Expr::Const(ident, val, next) => {
+        Expr::Const(ident, val) => {
             let val = eval(&val, context)?;
             context.push_var(ident, Variable::immutable(val));
-            eval(&next, context)?
+            Value::Null
         }
 
-        Expr::Set(ident, val, next) => {
+        Expr::Set(ident, val) => {
             let val = eval(&val, context)?;
 
             let var = context.find_mut(ident).ok_or_else(|| {
@@ -265,7 +265,7 @@ pub fn eval<'src>(
 
             *var = Variable::mutable(val);
 
-            eval(&next, context)?
+            Value::Null
         }
 
         Expr::Then(a, b) => {
@@ -273,11 +273,11 @@ pub fn eval<'src>(
             eval(&b, context)?
         }
 
-        Expr::Block(a, b) => {
+        Expr::Block(a) => {
             context.push_scope(false);
-            eval(&a, context)?;
+            let res = eval(&a, context)?;
             context.pop_scope();
-            eval(&b, context)?
+            res
         }
 
         Expr::Func(args, body) => Value::Func(args.clone(), body.clone()),
@@ -359,13 +359,14 @@ pub fn eval<'src>(
             res
         }
 
-        Expr::For(cond, a) => {
-            let mut res = Value::Null;
+        Expr::While(cond, a) => {
             loop {
                 let c = eval(cond, context)?;
                 context.push_scope(false);
                 match c {
-                    Value::Bool(true) => res = eval(a, context)?,
+                    Value::Bool(true) => {
+                        eval(a, context)?;
+                    }
                     Value::Bool(false) => break,
                     c => {
                         return Err(Error::new(
@@ -376,7 +377,35 @@ pub fn eval<'src>(
                 }
                 context.pop_scope();
             }
-            res
+            Value::Null
+        }
+
+        Expr::For(init, cond, each, body) => {
+            context.push_scope(false);
+
+            eval(init, context)?;
+
+            loop {
+                let c = eval(cond, context)?;
+                context.push_scope(false);
+                match c {
+                    Value::Bool(true) => {
+                        eval(body, context)?;
+                    }
+                    Value::Bool(false) => break,
+                    c => {
+                        return Err(Error::new(
+                            expression.1,
+                            format!("Conditions must result in booleans, found `{c}`"),
+                        ))
+                    }
+                }
+                eval(each, context)?;
+                context.pop_scope();
+            }
+
+            context.pop_scope();
+            Value::Null
         }
     })
 }

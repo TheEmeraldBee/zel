@@ -17,6 +17,10 @@ pub enum Token<'src> {
 
     For,
 
+    Continue,
+    Break,
+    Return,
+
     If,
     Else,
 }

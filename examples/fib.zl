@@ -7,23 +7,8 @@ const fib = fn(self, n) {
 	}
 };
 
-// The main entrypoint of the code
 const main = fn() {
-
-	const x = 4;
-
-	var i = 0;
-
-	for i < 50 {
-		i = i + 1;
-		print(i);
-	};
-
-	if !(5 == 6) {
-		print("5 != 6");
-	};
-
- 	print("Please type a number:");
-	const num = read_num();
-	print(fib(num));
+  print("Input a number:");
+  const input = read_num();
+  print(fib(input));
 };
