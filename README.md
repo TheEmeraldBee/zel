@@ -18,23 +18,33 @@ There are constant changes, and nothing is currently compiled, meaning the entir
 
 ## Up to date Example
 ```
-// Because of the top level being "global", you may use recursion to run functions!
-const fib = fn(n) {
+// In order to write a recursive function, the first parameter into a function should be self. This will be converted into the function you are working with
+const fib = fn(self, n) {
 	if n <= 1 {
 		n
 	} else {
-		fib(n - 1) + fib(n - 2)
+		self(n - 1) + self(n - 2)
 	}
 };
 
 // The main entrypoint of the code
 const main = fn() {
 
-  // Print prompt and read user input numeber.
+	const x = 4;
+
+	var i = 0;
+
+	for i < 50 {
+		i = i + 1;
+		print(i);
+	};
+
+	if !(5 == 6) {
+		print("5 != 6");
+	};
+
  	print("Please type a number:");
 	const num = read_num();
-
-  // Print the fib result of the function
 	print(fib(num));
 };
 

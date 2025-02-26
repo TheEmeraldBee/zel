@@ -284,17 +284,32 @@ pub fn eval<'src>(
 
         Expr::Call(func, inputted_args) => {
             let func_val = eval(&func, context)?;
-            match func_val {
+            match &func_val {
                 Value::Func(args, body) => {
-                    let eval_args = if inputted_args.0.len() != args.len() {
+                    let mut arg_count = args.len();
+
+                    let mut eval_args = vec![];
+                    if !args.is_empty() && args[0] == "self" {
+                        eval_args.push((args[0], Variable::immutable(func_val.clone())));
+                        arg_count -= 1;
+                    }
+
+                    if inputted_args.0.len() != arg_count {
                         return Err(Error::new(expression.1, format!("Trying to call function `{:?}`, but provided `{}` arguments and expected `{}` arguments.", func.0, inputted_args.0.len(), args.len())));
                     } else {
-                        args.iter()
+                        let mut next_args = args
+                            .iter()
+                            .skip(args.len() - arg_count)
                             .zip(inputted_args.0.iter())
                             .map(|(name, arg)| {
-                                Ok((*name, Variable::immutable(eval(arg, context)?)))
+                                if *name == "self" {
+                                    Err(Error::new(expression.1, format!("Function is taking `self` as a parameter, but `self` should only be used as the first parameter for a recursive function")))
+                                } else {
+                                    Ok((*name, Variable::immutable(eval(arg, context)?)))
+                                }
                             })
-                            .collect::<Result<Vec<_>, _>>()?
+                            .collect::<Result<Vec<_>, _>>()?;
+                        eval_args.append(&mut next_args);
                     };
 
                     context.push_scope(true);

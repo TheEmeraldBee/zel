@@ -32,6 +32,7 @@ pub enum Expr<'src> {
     Error,
     Value(Value<'src>),
     List(Vec<Spanned<Self>>),
+
     Local(&'src str),
 
     Var(&'src str, Box<Spanned<Self>>, Box<Spanned<Self>>),
