@@ -47,6 +47,7 @@ pub enum Expr<'src> {
     Monary(Box<Spanned<Self>>, MonadicOp),
 
     If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
+
     For(
         Box<Spanned<Self>>,
         Box<Spanned<Self>>,
@@ -54,6 +55,10 @@ pub enum Expr<'src> {
         Box<Spanned<Self>>,
     ),
     While(Box<Spanned<Self>>, Box<Spanned<Self>>),
+
+    Break,
+    Continue,
+    Return(Box<Spanned<Self>>),
 
     Call(Box<Spanned<Self>>, Spanned<Vec<Spanned<Self>>>),
 
@@ -154,8 +159,42 @@ where
                 .then(block.clone())
                 .map(|(args, body)| Expr::Func(args, Box::new(body)));
 
+            let increment = ident
+                .then_ignore(just(Token::Op("++")))
+                .map_with(|name, e| {
+                    Expr::Set(
+                        name,
+                        Box::new((
+                            Expr::Binary(
+                                Box::new((Expr::Local(name), e.span())),
+                                BinaryOp::Add,
+                                Box::new((Expr::Value(Value::Num(1.0)), e.span())),
+                            ),
+                            e.span(),
+                        )),
+                    )
+                });
+
+            let decrement = ident
+                .then_ignore(just(Token::Op("--")))
+                .map_with(|name, e| {
+                    Expr::Set(
+                        name,
+                        Box::new((
+                            Expr::Binary(
+                                Box::new((Expr::Local(name), e.span())),
+                                BinaryOp::Sub,
+                                Box::new((Expr::Value(Value::Num(1.0)), e.span())),
+                            ),
+                            e.span(),
+                        )),
+                    )
+                });
+
             let atom = choice([
                 val.boxed(),
+                increment.boxed(),
+                decrement.boxed(),
                 set.boxed(),
                 var.boxed(),
                 const_.boxed(),

@@ -407,5 +407,9 @@ pub fn eval<'src>(
             context.pop_scope();
             Value::Null
         }
+
+        Expr::Continue => Value::Null,
+        Expr::Break => Value::Null,
+        Expr::Return(v) => eval(v, context)?,
     })
 }
