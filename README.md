@@ -15,9 +15,12 @@ There are constant changes, and nothing is currently compiled, meaning the entir
 - [x] Add additional syntax to `for` to allow for `for var i = 0; i < 100; i = i + 1;` where you have an init, condition, and after grouping
 - [x] Add Increment `++` and decrement `--` math shortcuts
 - [x] Add `+=`, `-=`, `*=`, `/=`
+- [x] Code Validation before interpretation (Make sure that variables exist for now before code is executed)
+  - This was a big one, now variables are checked for both mutability, and existing for every expression before interpretation, making it a compile time issue instead
+  of a runtime issue!
 - [ ] Add control flow keywords `break`, `continue`, and `return`, where `return` can return a value, but the other two can not.
-- [ ] Code Validation before interpretation (Make sure that variables exist for now before code is executed)
 - [ ] Type Checking (Basic typing, this is a big one baby :))
+- [ ] Convert Interpreter to `cranelift` + `faerie` compiler!
 - [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
 
 ## Up to date Example

@@ -3,9 +3,13 @@ use chumsky::prelude::*;
 use eval::Context;
 use eval::Error;
 use eval::Variable;
+use semantic::analyze_expr;
 use semantic::analyze_top_level;
+use semantic::SemanticContext;
+use semantic::SemanticVar;
 use semantic::TopLevel;
 
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::rc::Rc;
@@ -78,6 +82,12 @@ fn main() {
         })))),
     );
 
+    let globals = HashMap::from([
+        ("read_num", SemanticVar::immutable()),
+        ("read_line", SemanticVar::immutable()),
+        ("print", SemanticVar::immutable()),
+    ]);
+
     let parse_errs = if let Some(tokens) = &tokens {
         let (ast, parse_errs) = parser()
             .map_with(|ast, e| (ast, e.span()))
@@ -95,16 +105,24 @@ fn main() {
                 Err(e) => errs.push(Rich::custom(e.span, e.msg)),
             }
 
-            ctx.insert_top_level(top_level);
-
-            let main_expr = (
-                Expr::Call(Box::new((Expr::Local("main"), ast.1)), (Vec::new(), ast.1)),
-                ast.1,
-            );
-
-            match eval(&main_expr, &mut ctx) {
-                Ok(_) => println!("\n\nCode successfully exited"),
+            let mut sem_ctx = SemanticContext::new(&top_level, globals);
+            match analyze_expr(&ast, &mut sem_ctx) {
+                Ok(_) => (),
                 Err(e) => errs.push(Rich::custom(e.span, e.msg)),
+            }
+
+            if errs.is_empty() {
+                ctx.insert_top_level(top_level);
+
+                let main_expr = (
+                    Expr::Call(Box::new((Expr::Local("main"), ast.1)), (Vec::new(), ast.1)),
+                    ast.1,
+                );
+
+                match eval(&main_expr, &mut ctx) {
+                    Ok(_) => println!("\n\nCode successfully exited"),
+                    Err(e) => errs.push(Rich::custom(e.span, e.msg)),
+                }
             }
         }
 
