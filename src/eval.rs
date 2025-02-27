@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use crate::{parse::MonadicOp, semantic::TopLevel, BinaryOp, Expr, Span, Spanned, Value};
+use crate::{
+    parse::{MonadicOp, SetOp},
+    semantic::TopLevel,
+    BinaryOp, Expr, Span, Spanned, Value,
+};
 
 pub struct Error {
     pub span: Span,
@@ -246,15 +250,18 @@ pub fn eval<'src>(
             Value::Null
         }
 
-        Expr::Set(ident, val) => {
+        Expr::Set(ident, op, val) => {
             let val = eval(&val, context)?;
 
-            let var = context.find_mut(ident).ok_or_else(|| {
-                Error::new(
-                    expression.1,
-                    format!("Variable `{}` not initialized!", ident),
-                )
-            })?;
+            let var = context
+                .find(ident)
+                .ok_or_else(|| {
+                    Error::new(
+                        expression.1,
+                        format!("Variable `{}` not initialized!", ident),
+                    )
+                })?
+                .clone();
 
             if !var.mutable {
                 return Err(Error::new(
@@ -263,7 +270,23 @@ pub fn eval<'src>(
                 ));
             }
 
-            *var = Variable::mutable(val);
+            let new_var = Variable::mutable(
+                match op {
+                    SetOp::Set => Ok(val),
+                    SetOp::Add => var.as_value(context)?.add(&val),
+                    SetOp::Sub => var.as_value(context)?.sub(&val),
+                    SetOp::Mul => var.as_value(context)?.mul(&val),
+                    SetOp::Div => var.as_value(context)?.div(&val),
+                }
+                .map_err(|e| Error::new(expression.1, e))?,
+            );
+
+            *context.find_mut(ident).ok_or_else(|| {
+                Error::new(
+                    expression.1,
+                    format!("Variable `{}` not initialized!", ident),
+                )
+            })? = new_var;
 
             Value::Null
         }

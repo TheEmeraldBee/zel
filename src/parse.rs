@@ -11,6 +11,15 @@ pub enum MonadicOp {
 }
 
 #[derive(Clone, Debug)]
+pub enum SetOp {
+    Set,
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+#[derive(Clone, Debug)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -37,7 +46,7 @@ pub enum Expr<'src> {
 
     Var(&'src str, Box<Spanned<Self>>),
     Const(&'src str, Box<Spanned<Self>>),
-    Set(&'src str, Box<Spanned<Self>>),
+    Set(&'src str, SetOp, Box<Spanned<Self>>),
 
     Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
 
@@ -137,10 +146,18 @@ where
                 .then(block_expr.clone().or(inline_expr.clone()))
                 .map(|(name, val)| Expr::Const(name, Box::new(val)));
 
+            let set_ops = [
+                just(Token::Op("=")).to(SetOp::Set),
+                just(Token::Op("+=")).to(SetOp::Add),
+                just(Token::Op("-=")).to(SetOp::Sub),
+                just(Token::Op("*=")).to(SetOp::Mul),
+                just(Token::Op("/=")).to(SetOp::Div),
+            ];
+
             let set = ident
-                .then_ignore(just(Token::Op("=")))
+                .then(choice(set_ops))
                 .then(block_expr.clone().or(inline_expr.clone()))
-                .map(|(name, val)| Expr::Set(name, Box::new(val)));
+                .map(|((name, op), val)| Expr::Set(name, op, Box::new(val)));
 
             let list = items
                 .clone()
@@ -164,14 +181,8 @@ where
                 .map_with(|name, e| {
                     Expr::Set(
                         name,
-                        Box::new((
-                            Expr::Binary(
-                                Box::new((Expr::Local(name), e.span())),
-                                BinaryOp::Add,
-                                Box::new((Expr::Value(Value::Num(1.0)), e.span())),
-                            ),
-                            e.span(),
-                        )),
+                        SetOp::Add,
+                        Box::new((Expr::Value(Value::Num(1.0)), e.span())),
                     )
                 });
 
@@ -180,14 +191,8 @@ where
                 .map_with(|name, e| {
                     Expr::Set(
                         name,
-                        Box::new((
-                            Expr::Binary(
-                                Box::new((Expr::Local(name), e.span())),
-                                BinaryOp::Sub,
-                                Box::new((Expr::Value(Value::Num(1.0)), e.span())),
-                            ),
-                            e.span(),
-                        )),
+                        SetOp::Sub,
+                        Box::new((Expr::Value(Value::Num(1.0)), e.span())),
                     )
                 });
 
