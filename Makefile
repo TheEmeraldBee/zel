@@ -7,5 +7,8 @@ loops:
 semantic_error:
 	cargo run -- examples/semantic_error.zl
 
+type_error:
+	cargo run -- examples/type_error.zl
+
 test:
 	cargo test

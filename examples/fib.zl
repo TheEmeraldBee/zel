@@ -1,9 +1,9 @@
 // In order to write a recursive function, the first parameter into a function should be self. This will be converted into the function you are working with
-const fib = fn(self, n) {
+const fib = fn(n: num) -> num {
 	if n <= 1 {
 		n
 	} else {
-		self(n - 1) + self(n - 2)
+		this(n - 1) + this(n - 2)
 	}
 };
 

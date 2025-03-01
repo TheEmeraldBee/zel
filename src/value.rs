@@ -3,7 +3,11 @@ use std::{
     rc::Rc,
 };
 
-use crate::{eval::Error, Expr, Span, Spanned};
+use crate::{
+    eval::Error,
+    types::{Primitive, Type},
+    Expr, Span, Spanned,
+};
 
 #[derive(Clone)]
 pub enum Value<'src> {
@@ -18,6 +22,34 @@ pub enum Value<'src> {
 }
 
 impl<'src> Value<'src> {
+    pub fn type_(&self) -> Result<Type, String> {
+        Ok(match self {
+            Value::Null => Type::Primitive(Primitive::Null),
+            Value::Bool(_) => Type::Primitive(Primitive::Bool),
+            Value::Num(_) => Type::Primitive(Primitive::Num),
+            Value::Str(_) => Type::Primitive(Primitive::String),
+            Value::List(body) => {
+                let item_type = body
+                    .first()
+                    .map(|x| x.type_())
+                    .unwrap_or(Ok(Type::Primitive(Primitive::Null)))?;
+
+                for item in body {
+                    if item.type_()? != item_type {
+                        return Err(format!(
+                            "List's type is `{item_type:?}`, but found an item with type `{:?}`",
+                            item.type_()
+                        ));
+                    }
+                }
+
+                Type::Primitive(Primitive::List(Box::new(item_type)))
+            }
+            Value::Func(_, _) => unreachable!("`Func` value type should not be checked!"),
+            Value::Rust(_) => unreachable!("`Rust` value type should not be checked!"),
+        })
+    }
+
     pub fn add(&self, rhs: &Self) -> Result<Value<'src>, String> {
         match (self, rhs) {
             (Value::Null, Value::Null) => Err(format!("Cannot add null values")),
@@ -125,7 +157,7 @@ impl<'src> Value<'src> {
             (Value::Bool(a), Value::Bool(b)) => Ok(a < b),
             (Value::Num(a), Value::Num(b)) => Ok(a < b),
             (Value::Str(a), Value::Str(b)) => Ok(a < b),
-            (Value::List(a), Value::List(b)) => Ok(a.iter().zip(b).all(|(a, b)| a.lt(b).unwrap())),
+            (Value::List(_), Value::List(_)) => Err(format!("Cannot compare list types")),
             (Value::Func(_, _), Value::Func(_, _)) => Err(format!("Cannot compare function types")),
             (Value::Rust(_), Value::Rust(_)) => Err(format!("Cannot compare rust function types")),
             _ => Err(format!(
@@ -145,7 +177,7 @@ impl<'src> Value<'src> {
             (Value::Bool(a), Value::Bool(b)) => Ok(a > b),
             (Value::Num(a), Value::Num(b)) => Ok(a > b),
             (Value::Str(a), Value::Str(b)) => Ok(a > b),
-            (Value::List(a), Value::List(b)) => Ok(a.iter().zip(b).all(|(a, b)| a.gt(b).unwrap())),
+            (Value::List(_), Value::List(_)) => Err(format!("Cannot compare list types")),
             (Value::Func(_, _), Value::Func(_, _)) => Err(format!("Cannot compare function types")),
             (Value::Rust(_), Value::Rust(_)) => Err(format!("Cannot compare rust function types")),
             _ => Err(format!(

@@ -18,44 +18,29 @@ There are constant changes, and nothing is currently compiled, meaning the entir
 - [x] Code Validation before interpretation (Make sure that variables exist for now before code is executed)
   - This was a big one, now variables are checked for both mutability, and existing for every expression before interpretation, making it a compile time issue instead
   of a runtime issue!
-- [ ] Add control flow keywords `break`, `continue`, and `return`, where `return` can return a value, but the other two can not.
 - [ ] Type Checking (Basic typing, this is a big one baby :))
+- [ ] Add control flow keywords `break`, `continue`, and `return`, where `return` can return a value, but the other two can not.
 - [ ] Convert Interpreter to `cranelift` + `faerie` compiler!
 - [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
 
-## Up to date Example
+## Examples
 ```
 // In order to write a recursive function, the first parameter into a function should be self. This will be converted into the function you are working with
-const fib = fn(self, n) {
+const fib = fn(n: num) -> num {
 	if n <= 1 {
 		n
 	} else {
-		self(n - 1) + self(n - 2)
+		this(n - 1) + this(n - 2)
 	}
 };
 
-// The main entrypoint of the code
 const main = fn() {
-
-	const x = 4;
-
-	var i = 0;
-
-	for i < 50 {
-		i = i + 1;
-		print(i);
-	};
-
-	if !(5 == 6) {
-		print("5 != 6");
-	};
-
- 	print("Please type a number:");
-	const num = read_num();
-	print(fib(num));
+  print("Input a number:");
+  const input = read_num();
+  print(fib(input));
 };
-
 ```
+More examples can be found [here](https://github.com/TheEmeraldBee/zel/tree/master/examples)
 
 ## Language Definition
 
@@ -67,10 +52,9 @@ const main = fn() {
 - Pass by pointer, but pass ownership if not using copy (`%`) or a pointer (`*`)
 - Ownership but no borrowing (memory handling is manual, but allocations can be released automatically)
 - `.` before a value interprets the type based on context (`.enummember`)
-- `var` keyword for creating variables
-- `const` keyword for variables that are known at compiletime
-- Immutable by default (`mut` to make var mutable)
-- Generics are handled at compile time define function templates using (`temp`)
+- `var` keyword for creating mutable variables
+- `const` keyword for creating immutable variables
+- Generics are handled at compile time, define function templates using (`temp`)
 - Runtime polymorphism is as easy as adding `dyn` to a template type
 
 ### Primitive Types:
@@ -117,7 +101,7 @@ const main = fn() {
   - Taking these templates into functions is pretty easy too!
     This would allow for this function to take anything using MyTemplate, and work on it!
     ```
-    const handle = fn(x: *mut MyTemplate) {
+    const handle = fn(x: *dyn MyTemplate) {
       x.a();
       x.y = 5;
     };

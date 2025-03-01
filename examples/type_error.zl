@@ -1,0 +1,10 @@
+const main = fn() {
+  const cool = fn(a: num) -> num {
+    a
+  };
+  print(my_func(4, cool));
+};
+
+const my_func = fn(a: bool, new_fn: fn(num) -> num) -> num {
+  new_fn(a)
+};

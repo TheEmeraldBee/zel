@@ -1,4 +1,7 @@
+use std::fmt::Display;
+
 use crate::lexer::Token;
+use crate::types::{Primitive, Type};
 use crate::value::Value;
 use crate::{Span, Spanned};
 use chumsky::input::ValueInput;
@@ -10,6 +13,19 @@ pub enum MonadicOp {
     Not,
 }
 
+impl Display for MonadicOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Neg => "-",
+                Self::Not => "!",
+            }
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum SetOp {
     Set,
@@ -17,6 +33,22 @@ pub enum SetOp {
     Sub,
     Mul,
     Div,
+}
+
+impl Display for SetOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Set => "=",
+                Self::Add => "+=",
+                Self::Sub => "-=",
+                Self::Mul => "*=",
+                Self::Div => "/=",
+            }
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +66,33 @@ pub enum BinaryOp {
 
     Or,
     And,
+}
+
+impl Display for BinaryOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Add => "+",
+                Self::Sub => "-",
+                Self::Mul => "*",
+                Self::Div => "/",
+
+                Self::Eq => "==",
+                Self::NotEq => "!=",
+
+                Self::Less => "<",
+                Self::LessEq => "<=",
+
+                Self::Greater => ">",
+                Self::GreaterEq => ">=",
+
+                Self::Or => "||",
+                Self::And => "&&",
+            }
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +130,7 @@ pub enum Expr<'src> {
 
     Call(Box<Spanned<Self>>, Spanned<Vec<Spanned<Self>>>),
 
-    Func(Vec<&'src str>, Box<Spanned<Self>>),
+    Func(Vec<(&'src str, Type)>, (Box<Spanned<Self>>, Type)),
 }
 
 pub fn parser<'src, I>(
@@ -81,6 +140,57 @@ where
 {
     recursive(|expr| {
         let ident = select! { Token::Ident(ident) => ident }.labelled("identifier");
+
+        let primitive = choice([
+            just(Token::Ident("num"))
+                .to(Type::Primitive(Primitive::Num))
+                .boxed(),
+            just(Token::Ident("bool"))
+                .to(Type::Primitive(Primitive::Bool))
+                .boxed(),
+            just(Token::Ident("str"))
+                .to(Type::Primitive(Primitive::String))
+                .boxed(),
+        ]);
+
+        let list_type = primitive
+            .clone()
+            .delimited_by(just(Token::Ctrl('[')), just(Token::Ctrl(']')))
+            .map(|type_| Type::Primitive(Primitive::List(Box::new(type_))));
+
+        let rust_fn_type = just(Token::Fn)
+            .ignore_then(just(Token::Op("->")))
+            .ignore_then(primitive.clone())
+            .map(|result| Type::Primitive(Primitive::RustFunc(Box::new(result))));
+
+        let fn_type = just(Token::Fn)
+            .ignore_then(
+                primitive
+                    .clone()
+                    .separated_by(just(Token::Ctrl(',')))
+                    .allow_trailing()
+                    .collect()
+                    .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')'))),
+            )
+            .then(
+                just(Token::Op("->"))
+                    .ignore_then(primitive.clone())
+                    .or_not(),
+            )
+            .map(|(args, result)| {
+                Type::Primitive(Primitive::Func(
+                    args,
+                    Box::new(result.unwrap_or_else(|| Type::Primitive(Primitive::Null))),
+                ))
+            });
+
+        let types = choice([
+            primitive.boxed(),
+            list_type.boxed(),
+            rust_fn_type.boxed(),
+            fn_type.boxed(),
+        ])
+        .labelled("type");
 
         let block = expr
             .clone()
@@ -165,16 +275,23 @@ where
                 .delimited_by(just(Token::Ctrl('[')), just(Token::Ctrl(']')));
 
             let args = ident
+                .then_ignore(just(Token::Ctrl(':')))
+                .then(types.clone())
                 .separated_by(just(Token::Ctrl(',')))
                 .allow_trailing()
                 .collect()
-                .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')))
-                .labelled("function args");
+                .delimited_by(just(Token::Ctrl('(')), just(Token::Ctrl(')')));
 
             let func = just(Token::Fn)
                 .ignore_then(args)
+                .then(
+                    just(Token::Op("->"))
+                        .ignore_then(types)
+                        .or_not()
+                        .map(|t| t.unwrap_or_else(|| Type::Primitive(Primitive::Null))),
+                )
                 .then(block.clone())
-                .map(|(args, body)| Expr::Func(args, Box::new(body)));
+                .map(|((args, ret), body)| Expr::Func(args, (Box::new(body), ret)));
 
             let increment = ident
                 .then_ignore(just(Token::Op("++")))

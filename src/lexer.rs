@@ -23,6 +23,8 @@ pub enum Token<'src> {
 
     If,
     Else,
+
+    This,
 }
 
 pub fn lexer<'src>(
@@ -73,7 +75,7 @@ pub fn lexer<'src>(
         .to_slice()
         .map(Token::Op);
 
-    let ctrl = one_of("{}[]();,").map(Token::Ctrl);
+    let ctrl = one_of("{}[]();:,").map(Token::Ctrl);
 
     let ident = text::ascii::ident().map(|ident: &str| match ident {
         "false" => Token::Bool(false),
