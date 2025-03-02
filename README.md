@@ -19,8 +19,8 @@ There are constant changes, and nothing is currently compiled, meaning the entir
   - This was a big one, now variables are checked for both mutability, and existing for every expression before interpretation, making it a compile time issue instead
   of a runtime issue!
 - [x] Type Checking (Basic typing, this is a big one baby :))
-- [ ] Add control flow keywords `break`, `continue`, and `return`, where `return` can return a value, but the other two can not.
 - [ ] Convert Interpreter to `cranelift` + `faerie` compiler!
+- [ ] Add control flow keywords `break`, `continue`, and `return`, where `return` can return a value, but the other two can not.
 - [ ] **MUCH** More to come (I will always try to have 3 steps more than what is done)
 
 ## Examples

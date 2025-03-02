@@ -7,6 +7,7 @@ const fib = fn(n: num) -> num {
 	}
 };
 
+
 const main = fn() {
   print("Input a number:");
   const input = read_num();

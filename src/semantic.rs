@@ -176,7 +176,7 @@ fn require_same(span: Span, type_a: &Type, type_b: &Type) -> Result<(), Error> {
         false => Err(Error::new(
             span,
             format!(
-                "Types for this expression need to be the same, got `{:?}` and `{:?}`",
+                "Types for this expression need to be the same, expected `{}`, got `{}`",
                 type_a, type_b
             ),
         )),

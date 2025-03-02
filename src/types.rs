@@ -1,6 +1,20 @@
+use std::fmt::Display;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Type {
     Primitive(Primitive),
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Primitive(p) => p.to_string(),
+            }
+        )
+    }
 }
 
 impl Type {
@@ -79,3 +93,46 @@ pub enum Primitive {
     Func(Vec<Type>, Box<Type>),
     RustFunc(Box<Type>),
 }
+
+impl Display for Primitive {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Primitive::Null => "null".to_string(),
+                Primitive::Num => "num".to_string(),
+                Primitive::Bool => "bool".to_string(),
+                Primitive::String => "string".to_string(),
+                Primitive::List(t) => format!("[{t}]"),
+                Primitive::Func(args, ret) => format!(
+                    "fn ({}) -> {}",
+                    args.iter()
+                        .map(|x| x.to_string())
+                        .reduce(|prev, this| format!("{prev}, {this}"))
+                        .unwrap_or("".to_string()),
+                    ret
+                ),
+                Primitive::RustFunc(_) => todo!(),
+            }
+        )
+    }
+}
+
+/*
+const Primitive = enum {
+    null,
+
+    num,
+
+    list(Type),
+
+    func([Type], Type),
+};
+
+.null;
+.Null;
+
+.list(.num);
+.List(.Num);
+*/
