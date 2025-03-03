@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 use crate::lexer::Token;
 use crate::types::{Primitive, Type};
 use crate::value::Value;
@@ -7,134 +5,14 @@ use crate::{Span, Spanned};
 use chumsky::input::ValueInput;
 use chumsky::prelude::*;
 
-#[derive(Clone, Debug)]
-pub enum MonadicOp {
-    Neg,
-    Not,
-}
+pub mod ops;
+pub use ops::*;
 
-impl Display for MonadicOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Neg => "-",
-                Self::Not => "!",
-            }
-        )
-    }
-}
+pub mod expr;
+pub use expr::*;
 
-#[derive(Clone, Debug)]
-pub enum SetOp {
-    Set,
-    Add,
-    Sub,
-    Mul,
-    Div,
-}
-
-impl Display for SetOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Set => "=",
-                Self::Add => "+=",
-                Self::Sub => "-=",
-                Self::Mul => "*=",
-                Self::Div => "/=",
-            }
-        )
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum BinaryOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Eq,
-    NotEq,
-    Less,
-    LessEq,
-    Greater,
-    GreaterEq,
-
-    Or,
-    And,
-}
-
-impl Display for BinaryOp {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Self::Add => "+",
-                Self::Sub => "-",
-                Self::Mul => "*",
-                Self::Div => "/",
-
-                Self::Eq => "==",
-                Self::NotEq => "!=",
-
-                Self::Less => "<",
-                Self::LessEq => "<=",
-
-                Self::Greater => ">",
-                Self::GreaterEq => ">=",
-
-                Self::Or => "||",
-                Self::And => "&&",
-            }
-        )
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum Expr<'src> {
-    Error,
-    Value(Value<'src>),
-    List(Vec<Spanned<Self>>),
-
-    Local(&'src str),
-
-    Var(&'src str, Box<Spanned<Self>>),
-    Const(&'src str, Box<Spanned<Self>>),
-    Set(&'src str, SetOp, Box<Spanned<Self>>),
-
-    Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
-
-    Block(Box<Spanned<Self>>),
-
-    Binary(Box<Spanned<Self>>, BinaryOp, Box<Spanned<Self>>),
-    Monary(Box<Spanned<Self>>, MonadicOp),
-
-    If(Box<Spanned<Self>>, Box<Spanned<Self>>, Box<Spanned<Self>>),
-
-    For(
-        Box<Spanned<Self>>,
-        Box<Spanned<Self>>,
-        Box<Spanned<Self>>,
-        Box<Spanned<Self>>,
-    ),
-    While(Box<Spanned<Self>>, Box<Spanned<Self>>),
-
-    Break,
-    Continue,
-    Return(Box<Spanned<Self>>),
-
-    Call(Box<Spanned<Self>>, Spanned<Vec<Spanned<Self>>>),
-
-    Func(Vec<(&'src str, Type)>, (Box<Spanned<Self>>, Type)),
-}
-
-pub fn parser<'src, I>(
-) -> impl Parser<'src, I, Spanned<Expr<'src>>, extra::Err<Rich<'src, Token<'src>, Span>>> + Clone
+pub fn parser<'src, I>()
+-> impl Parser<'src, I, Spanned<Expr<'src>>, extra::Err<Rich<'src, Token<'src>, Span>>> + Clone
 where
     I: ValueInput<'src, Token = Token<'src>, Span = Span>,
 {

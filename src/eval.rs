@@ -1,177 +1,14 @@
-use std::collections::HashMap;
-
 use crate::{
-    parse::{MonadicOp, SetOp},
-    semantic::TopLevel,
-    BinaryOp, Expr, Span, Spanned, Value,
+    Error, Spanned,
+    parse::{BinaryOp, Expr, MonadicOp, SetOp},
+    value::Value,
 };
 
-pub struct Error {
-    pub span: Span,
-    pub msg: String,
-}
+pub mod variable;
+pub use variable::*;
 
-impl Error {
-    pub fn new(span: Span, msg: impl ToString) -> Self {
-        Self {
-            span,
-            msg: msg.to_string(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Context<'src> {
-    top_level: HashMap<&'src str, Variable<'src>>,
-    vars: Vec<(bool, HashMap<&'src str, Variable<'src>>)>,
-    globals: HashMap<&'src str, Variable<'src>>,
-}
-
-impl<'src> Default for Context<'src> {
-    fn default() -> Self {
-        Self::new(HashMap::new(), HashMap::new(), false)
-    }
-}
-
-impl<'src> Context<'src> {
-    pub fn new(
-        vars: HashMap<&'src str, Variable<'src>>,
-        globals: HashMap<&'src str, Variable<'src>>,
-        exclusive: bool,
-    ) -> Self {
-        Self {
-            top_level: HashMap::new(),
-            vars: vec![(exclusive, vars)],
-            globals,
-        }
-    }
-
-    pub fn find(&self, ident: &'src str) -> Option<&Variable<'src>> {
-        self.top_level
-            .get(ident)
-            .or_else(|| self.globals.get(ident))
-            .or_else(|| {
-                let vars = self
-                    .vars
-                    .last()
-                    .expect("Stack should have at least one scope");
-                if vars.0 {
-                    vars.1.get(ident)
-                } else {
-                    self.vars
-                        .iter()
-                        .rfind(|x| x.1.contains_key(ident))
-                        .and_then(|x| x.1.get(ident))
-                }
-            })
-    }
-    pub fn find_mut(&mut self, ident: &'src str) -> Option<&mut Variable<'src>> {
-        self.top_level
-            .get_mut(ident)
-            .or_else(|| self.globals.get_mut(ident))
-            .or_else(|| {
-                if self
-                    .vars
-                    .last()
-                    .expect("Stack should have at least one scope")
-                    .0
-                {
-                    self.vars
-                        .last_mut()
-                        .expect("Stack should have at least one scope")
-                        .1
-                        .get_mut(ident)
-                } else {
-                    self.vars
-                        .iter_mut()
-                        .rfind(|x| x.1.contains_key(ident))
-                        .and_then(|x| x.1.get_mut(ident))
-                }
-            })
-    }
-
-    pub fn insert_top_level(&mut self, top_level: TopLevel<'src>) {
-        for (key, value) in top_level.vars.into_iter() {
-            self.top_level.insert(key, Variable::const_expr(value));
-        }
-    }
-
-    pub fn insert_global(&mut self, ident: &'src str, val: Variable<'src>) {
-        self.globals.insert(ident, val);
-    }
-
-    pub fn push_scope(&mut self, exclusive: bool) {
-        self.vars.push((exclusive, HashMap::new()));
-    }
-
-    pub fn pop_scope(&mut self) {
-        self.vars.pop();
-    }
-
-    pub fn push_var(&mut self, ident: &'src str, var: Variable<'src>) {
-        self.vars
-            .last_mut()
-            .expect("Stack should have at least one scope")
-            .1
-            .insert(ident, var);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum VariableInfo<'src> {
-    Value(Value<'src>),
-    Expr(Spanned<Expr<'src>>),
-}
-
-#[derive(Debug, Clone)]
-pub struct Variable<'src> {
-    pub mutable: bool,
-    val: VariableInfo<'src>,
-}
-
-impl<'src> Variable<'src> {
-    pub fn mutable(val: Value<'src>) -> Self {
-        Self {
-            mutable: true,
-            val: VariableInfo::Value(val),
-        }
-    }
-    pub fn immutable(val: Value<'src>) -> Self {
-        Self {
-            mutable: false,
-            val: VariableInfo::Value(val),
-        }
-    }
-
-    pub fn const_expr(expr: Spanned<Expr<'src>>) -> Self {
-        Self {
-            mutable: false,
-            val: VariableInfo::Expr(expr),
-        }
-    }
-
-    pub fn as_value(&self, context: &mut Context<'src>) -> Result<Value<'src>, Error> {
-        context.push_scope(true);
-
-        let value = match &self.val {
-            VariableInfo::Value(v) => v.clone(),
-            VariableInfo::Expr(expr) => eval(&expr, context)?,
-        };
-
-        context.pop_scope();
-
-        Ok(value)
-    }
-
-    pub fn as_expr(&self) -> Result<&Spanned<Expr<'src>>, String> {
-        match &self.val {
-            VariableInfo::Value(_) => Err(format!(
-                "Failed to find main in top_level, as it is a value and not an expression!"
-            )),
-            VariableInfo::Expr(e) => Ok(&e),
-        }
-    }
-}
+pub mod context;
+pub use context::*;
 
 pub fn eval<'src>(
     expression: &Spanned<Expr<'src>>,
@@ -315,7 +152,15 @@ pub fn eval<'src>(
                     let mut eval_args = vec![];
 
                     if inputted_args.0.len() != args.len() {
-                        return Err(Error::new(expression.1, format!("Trying to call function `{:?}`, but provided `{}` arguments and expected `{}` arguments.", func.0, inputted_args.0.len(), args.len())));
+                        return Err(Error::new(
+                            expression.1,
+                            format!(
+                                "Trying to call function `{:?}`, but provided `{}` arguments and expected `{}` arguments.",
+                                func.0,
+                                inputted_args.0.len(),
+                                args.len()
+                            ),
+                        ));
                     } else {
                         let mut next_args = args
                             .iter()
@@ -354,7 +199,7 @@ pub fn eval<'src>(
                     return Err(Error::new(
                         expression.1,
                         format!("Trying to call `{:?}`, which is not a function!", f),
-                    ))
+                    ));
                 }
             }
         }
@@ -369,7 +214,7 @@ pub fn eval<'src>(
                     return Err(Error::new(
                         expression.1,
                         format!("Conditions must result in booleans, found `{c}`"),
-                    ))
+                    ));
                 }
             };
             context.pop_scope();
@@ -389,7 +234,7 @@ pub fn eval<'src>(
                         return Err(Error::new(
                             expression.1,
                             format!("Conditions must result in booleans, found `{c}`"),
-                        ))
+                        ));
                     }
                 }
                 context.pop_scope();
@@ -414,7 +259,7 @@ pub fn eval<'src>(
                         return Err(Error::new(
                             expression.1,
                             format!("Conditions must result in booleans, found `{c}`"),
-                        ))
+                        ));
                     }
                 }
                 eval(each, context)?;

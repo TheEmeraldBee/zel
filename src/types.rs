@@ -113,7 +113,7 @@ impl Display for Primitive {
                         .unwrap_or("".to_string()),
                     ret
                 ),
-                Primitive::RustFunc(_) => todo!(),
+                Primitive::RustFunc(ret) => format!("rust -> {ret}"),
             }
         )
     }

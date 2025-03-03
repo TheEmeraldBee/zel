@@ -1,0 +1,4 @@
+// Challenge 1, write a program that takes in a name,
+// figures out if that name is the same as any of 4 other names,
+// and print out a special message for them
+// Otherwise, just greet them!

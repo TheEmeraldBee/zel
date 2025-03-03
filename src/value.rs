@@ -4,9 +4,10 @@ use std::{
 };
 
 use crate::{
-    eval::Error,
+    Span, Spanned,
+    error::Error,
+    parse::Expr,
     types::{Primitive, Type},
-    Expr, Span, Spanned,
 };
 
 #[derive(Clone)]

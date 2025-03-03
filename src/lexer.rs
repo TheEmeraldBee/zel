@@ -2,33 +2,11 @@ use chumsky::prelude::*;
 
 use crate::{Span, Spanned};
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum Token<'src> {
-    Bool(bool),
-    Num(f64),
-    Str(&'src str),
-    Op(&'src str),
-    Ctrl(char),
-    Ident(&'src str),
+pub mod token;
+pub use token::*;
 
-    Fn,
-    Var,
-    Const,
-
-    For,
-
-    Continue,
-    Break,
-    Return,
-
-    If,
-    Else,
-
-    This,
-}
-
-pub fn lexer<'src>(
-) -> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<Rich<'src, char, Span>>> {
+pub fn lexer<'src>()
+-> impl Parser<'src, &'src str, Vec<Spanned<Token<'src>>>, extra::Err<Rich<'src, char, Span>>> {
     let num = text::int(10)
         .then(just('.').then(text::digits(10)).or_not())
         .to_slice()

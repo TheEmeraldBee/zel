@@ -1,19 +1,22 @@
-use ariadne::{Color, Label, Report, ReportKind, Source};
 use chumsky::prelude::*;
+use error::Error;
+use error::print_errors;
 use eval::Context;
-use eval::Error;
 use eval::Variable;
-use semantic::analyze_top_level;
 use semantic::SemanticContext;
 use semantic::SemanticVar;
 use semantic::TopLevel;
+use semantic::analyze_top_level;
 use types::Primitive;
 use types::Type;
+use value::Value;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::rc::Rc;
+
+pub mod error;
 
 pub type Span = SimpleSpan;
 pub type Spanned<T> = (T, Span);
@@ -21,17 +24,14 @@ pub type Spanned<T> = (T, Span);
 pub mod lexer;
 
 pub mod value;
-use value::Value;
 
 pub mod parse;
-use parse::{parser, BinaryOp, Expr};
 
 pub mod semantic;
 
 pub mod types;
 
 pub mod eval;
-use eval::eval;
 
 fn main() {
     let filename = env::args().nth(1).expect("Expected file argument");
@@ -85,7 +85,7 @@ fn main() {
         })))),
     );
 
-    let globals = HashMap::from([
+    let globals = BTreeMap::from([
         (
             "read_num",
             SemanticVar::immutable(Type::Primitive(Primitive::RustFunc(Box::new(
@@ -107,7 +107,7 @@ fn main() {
     ]);
 
     let parse_errs = if let Some(tokens) = &tokens {
-        let (ast, parse_errs) = parser()
+        let (ast, parse_errs) = parse::parser()
             .map_with(|ast, e| (ast, e.span()))
             .parse(
                 tokens
@@ -138,12 +138,15 @@ fn main() {
 
                 // Solve the main function by calling it!
                 let main_expr = (
-                    Expr::Call(Box::new((Expr::Local("main"), ast.1)), (Vec::new(), ast.1)),
+                    parse::Expr::Call(
+                        Box::new((parse::Expr::Local("main"), ast.1)),
+                        (Vec::new(), ast.1),
+                    ),
                     ast.1,
                 );
 
                 // Eval the main function, printing if success, and building errors
-                match eval(&main_expr, &mut ctx) {
+                match eval::eval(&main_expr, &mut ctx) {
                     Ok(_) => println!("\n\nCode successfully exited"),
                     Err(e) => errs.push(Rich::custom(e.span, e.msg)),
                 }
@@ -155,31 +158,5 @@ fn main() {
         Vec::new()
     };
 
-    errs.into_iter()
-        .map(|e| e.map_token(|c| c.to_string()))
-        .chain(
-            parse_errs
-                .into_iter()
-                .map(|e| e.map_token(|tok| format!("{:?}", tok))),
-        )
-        .for_each(|e| {
-            Report::build(
-                ReportKind::Error,
-                (filename.clone(), e.span().start..e.span().start),
-            )
-            .with_message(e.to_string())
-            .with_label(
-                Label::new((filename.clone(), e.span().into_range()))
-                    .with_message(e.reason().to_string())
-                    .with_color(Color::Red),
-            )
-            .with_labels(e.contexts().map(|(label, span)| {
-                Label::new((filename.clone(), span.into_range()))
-                    .with_message(format!("while parsing this {}", label))
-                    .with_color(Color::Yellow)
-            }))
-            .finish()
-            .print((filename.clone(), Source::from(src.clone())))
-            .unwrap()
-        });
+    print_errors(&filename, &src, errs, parse_errs);
 }
