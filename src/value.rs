@@ -51,6 +51,16 @@ impl<'src> Value<'src> {
         })
     }
 
+    pub fn idx(&self, idx: &Self) -> Result<Value<'src>, String> {
+        match (self, idx) {
+            (Value::List(l), Value::Num(i)) => Ok(l[*i as usize].clone()),
+            _ => Err(format!(
+                "Cannot index `{}` with `{}`. You can only index lists by numbers!",
+                self, idx
+            )),
+        }
+    }
+
     pub fn add(&self, rhs: &Self) -> Result<Value<'src>, String> {
         match (self, rhs) {
             (Value::Null, Value::Null) => Err(format!("Cannot add null values")),

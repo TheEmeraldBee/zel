@@ -76,10 +76,13 @@ pub fn lexer<'src>()
 
     let line_comment = just("//")
         .then(any().and_is(just('\n').not()).repeated())
-        .padded();
-    let block_comment = just("//*")
-        .then(any().and_is(just("*//").not()).repeated())
-        .padded();
+        .padded()
+        .ignored();
+    let block_comment = just("/*")
+        .then(any().and_is(just("*/").not()).repeated())
+        .then_ignore(just("*/"))
+        .padded()
+        .ignored();
 
     let comment = line_comment.or(block_comment).ignored();
 

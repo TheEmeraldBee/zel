@@ -15,6 +15,8 @@ pub enum Expr<'src> {
     Const(&'src str, Box<Spanned<Self>>),
     Set(&'src str, SetOp, Box<Spanned<Self>>),
 
+    Index(&'src str, Box<Spanned<Self>>),
+
     Then(Box<Spanned<Self>>, Box<Spanned<Self>>),
 
     Block(Box<Spanned<Self>>),

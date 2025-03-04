@@ -6,3 +6,4 @@ edition = "2024"
 [dependencies]
 ariadne = "0.5.0"
 chumsky = { git = "https://github.com/zesterer/chumsky.git" }
+cranelift = { version = "0.117.2", features = ["module", "native"] }

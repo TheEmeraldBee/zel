@@ -75,6 +75,28 @@ pub fn analyze_expr<'src>(
             Type::Primitive(Primitive::Null)
         }
 
+        Expr::Index(ident, body) => {
+            let var_type = ctx.has(ident, false).map_err(|e| Error::new(expr.1, e))?;
+            let type_ = analyze_expr(body, ctx)?;
+
+            if type_ != Type::Primitive(Primitive::Num) {
+                return Err(Error::new(
+                    expr.1,
+                    format!("Index type must be num, found `{}`", type_),
+                ));
+            }
+
+            match var_type {
+                Type::Primitive(Primitive::List(l)) => *l.clone(),
+                _ => {
+                    return Err(Error::new(
+                        expr.1,
+                        format!("Type of var must be list, got `{}`", var_type),
+                    ));
+                }
+            }
+        }
+
         Expr::Then(first, last) => {
             analyze_expr(first, ctx)?;
             analyze_expr(last, ctx)?

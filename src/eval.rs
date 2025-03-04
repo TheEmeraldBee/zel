@@ -128,6 +128,24 @@ pub fn eval<'src>(
             Value::Null
         }
 
+        Expr::Index(ident, body) => {
+            let idx = eval(&body, context)?;
+
+            let var = context
+                .find(ident)
+                .ok_or_else(|| {
+                    Error::new(
+                        expression.1,
+                        format!("Variable '{}' not initialized!", ident),
+                    )
+                })?
+                .clone();
+
+            var.as_value(context)?
+                .idx(&idx)
+                .map_err(|e| Error::new(expression.1, e))?
+        }
+
         Expr::Then(a, b) => {
             eval(&a, context)?;
             eval(&b, context)?

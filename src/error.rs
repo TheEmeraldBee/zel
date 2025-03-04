@@ -29,7 +29,7 @@ pub fn print_errors<'src>(
         .chain(
             parse_errs
                 .into_iter()
-                .map(|e| e.map_token(|tok| format!("{tok:?}"))),
+                .map(|e| e.map_token(|tok| format!("{tok}"))),
         )
         .for_each(|e| {
             Report::build(
@@ -44,7 +44,7 @@ pub fn print_errors<'src>(
             )
             .with_labels(e.contexts().map(|(label, span)| {
                 Label::new((filename, span.into_range()))
-                    .with_message(format!("while parsing this {}", label))
+                    .with_message(format!("while parsing this {label}"))
                     .with_color(Color::Yellow)
             }))
             .finish()

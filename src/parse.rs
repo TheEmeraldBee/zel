@@ -191,6 +191,15 @@ where
                     )
                 });
 
+            let index = ident
+                .then(
+                    block_expr
+                        .clone()
+                        .or(inline_expr.clone())
+                        .delimited_by(just(Token::Ctrl('[')), just(Token::Ctrl(']'))),
+                )
+                .map(|(name, body)| Expr::Index(name, Box::new(body)));
+
             let atom = choice([
                 val.boxed(),
                 increment.boxed(),
@@ -200,6 +209,7 @@ where
                 const_.boxed(),
                 list.boxed(),
                 func.boxed(),
+                index.boxed(),
                 ident.map(Expr::Local).boxed(),
             ])
             .map_with(|expr, e| (expr, e.span()))

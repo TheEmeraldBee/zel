@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use crate::semantic::{SemanticVar, TopLevel};
+use crate::semantic::TopLevel;
 
 use super::Variable;
 
