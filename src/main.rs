@@ -119,39 +119,45 @@ fn main() {
             .into_output_errors();
 
         if let Some((ast, _file_span)) = ast.filter(|_| errs.is_empty() && parse_errs.is_empty()) {
-            let mut top_level = TopLevel::default();
+            // let mut top_level = TopLevel::default();
 
             // Analyze top level and find elements
-            match analyze_top_level(&ast, &mut top_level) {
-                Ok(_) => (),
-                Err(e) => errs.push(Rich::custom(e.span, e.msg)),
-            }
+            // match analyze_top_level(&ast, &mut top_level) {
+            //     Ok(_) => (),
+            //     Err(e) => errs.push(Rich::custom(e.span, e.msg)),
+            // }
 
-            // Do type checking, and variable solving
-            match SemanticContext::solve(&top_level, globals) {
-                Ok(_) => {}
-                Err(e) => errs.push(Rich::custom(e.span, e.msg)),
-            };
+            // // Do type checking, and variable solving
+            // match SemanticContext::solve(&top_level, globals) {
+            //     Ok(_) => {}
+            //     Err(e) => errs.push(Rich::custom(e.span, e.msg)),
+            // };
 
             // Ensure there were no errors solving for top-level
             if errs.is_empty() {
                 // Insert top level declarations into context
-                ctx.insert_top_level(top_level);
+                // ctx.insert_top_level(top_level);
 
                 // Solve the main function by calling it!
-                let main_expr = (
-                    parse::Expr::Call(
-                        Box::new((parse::Expr::Local("main"), ast.1)),
-                        (Vec::new(), ast.1),
-                    ),
-                    ast.1,
-                );
+                // let main_expr = (
+                //     parse::Expr::Call(
+                //         Box::new((parse::Expr::Local("main"), ast.1)),
+                //         (Vec::new(), ast.1),
+                //     ),
+                //     ast.1,
+                // );
 
-                // Eval the main function, printing if success, and building errors
-                match eval::eval(&main_expr, &mut ctx) {
-                    Ok(_) => println!("\n\nCode successfully exited"),
-                    Err(e) => errs.push(Rich::custom(e.span, e.msg)),
-                }
+                // // Eval the main function, printing if success, and building errors
+                // match eval::eval(&main_expr, &mut ctx) {
+                //     Ok(_) => println!("\n\nCode successfully exited"),
+                //     Err(e) => errs.push(Rich::custom(e.span, e.msg)),
+                // }
+
+                let mut compiler = compile::Compiler::new("main");
+
+                compiler.compile(ast).unwrap();
+
+                println!("{:?}", compiler.finish().object);
             }
         }
 

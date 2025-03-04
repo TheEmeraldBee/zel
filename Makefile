@@ -16,5 +16,8 @@ chal1:
 chal2:
 	cargo run -- examples/challenge2.zl
 
+compile:
+	cargo run -- examples/compile_test.zl
+
 test:
 	cargo test

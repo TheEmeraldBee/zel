@@ -1,5 +1,7 @@
 use std::fmt::Display;
 
+use cranelift::prelude::{Value, Variable};
+
 #[derive(Clone, Debug)]
 pub enum MonadicOp {
     Neg,

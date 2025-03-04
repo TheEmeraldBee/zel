@@ -94,6 +94,18 @@ pub enum Primitive {
     RustFunc(Box<Type>),
 }
 
+impl Primitive {
+    pub fn abi_type(&self) -> cranelift::prelude::Type {
+        match self {
+            Self::Null => cranelift::prelude::types::INVALID,
+            Self::Num => cranelift::prelude::types::F64,
+            Self::Bool => cranelift::prelude::Type::int(1).unwrap(),
+            Self::Func(_, _) => cranelift::prelude::types::I64,
+            _ => todo!(),
+        }
+    }
+}
+
 impl Display for Primitive {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
