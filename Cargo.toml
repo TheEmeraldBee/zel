@@ -3,7 +3,12 @@ name = "zel"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "zel"
+path = "src/main.rs"
+
 [dependencies]
-ariadne = "0.5.0"
-chumsky = { git = "https://github.com/zesterer/chumsky.git" }
 cranelift = { version = "0.117.2", features = ["module", "native", "object"] }

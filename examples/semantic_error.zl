@@ -1,6 +1,0 @@
-const main = fn() {
-  // Try to fix this! `const` is invalid, because it means that x is not mutable, how would you fix this?
-  const x = 5;
-  x += 5;
-  print(x);
-};

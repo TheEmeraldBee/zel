@@ -1,3 +1,0 @@
-// Challenge 2 write a **recursive** function that takes in a user input number,
-// adds the number from the last recursion
-// to the user input, then prints out the user output when the input is 0!
