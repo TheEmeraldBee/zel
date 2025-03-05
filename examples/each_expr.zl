@@ -1,0 +1,7 @@
+const main = fn() -> num {
+  fn() -> num {
+    fn () -> num {
+      1 + 1
+    }()
+  }()
+};

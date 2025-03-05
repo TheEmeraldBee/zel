@@ -1,5 +1,6 @@
 [package]
 name = "zel"
+description = "The compiler for the zel programming language"
 version = "0.1.0"
 edition = "2024"
 
@@ -11,4 +12,7 @@ name = "zel"
 path = "src/main.rs"
 
 [dependencies]
-cranelift = { version = "0.117.2", features = ["module", "native", "object"] }
+anyhow = "1.0.97"
+clap = { version = "4.5.31", features = ["derive"] }
+cranelift = { version = "0.117.2", features = ["module", "object"] }
+thiserror = "2.0.12"
