@@ -28,9 +28,8 @@ fn main() -> anyhow::Result<()> {
 
     let tokens = Lex::new(&src).collect::<Result<Vec<_>, _>>()?;
     for token in tokens {
-        print!("{token}, ");
+        println!("{token}");
     }
-    println!();
 
     let mut compiler = Compiler::new(out_name)?;
 

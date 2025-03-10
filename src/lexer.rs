@@ -119,6 +119,10 @@ impl Iterator for Lex<'_> {
                     "true" => Token::Literal(Literal::Bool(true)),
                     "false" => Token::Literal(Literal::Bool(false)),
 
+                    "const" => Token::Const,
+                    "let" => Token::Let,
+                    "mut" => Token::Mut,
+
                     "fn" => Token::Fn,
 
                     "if" => Token::If,

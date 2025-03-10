@@ -11,6 +11,10 @@ pub enum Token {
     Ctrl(char),
     Op(String),
 
+    Const,
+    Let,
+    Mut,
+
     Fn,
 
     If,
@@ -25,10 +29,14 @@ impl Display for Token {
             f,
             "{}",
             match self {
-                Self::Literal(a) => a.to_string(),
-                Self::Ident(a) => a.clone(),
-                Self::Ctrl(ch) => ch.to_string(),
-                Self::Op(op) => op.clone(),
+                Self::Literal(val) => format!("literal: `{}`", val),
+                Self::Ident(ident) => format!("ident: `{}`", ident),
+                Self::Ctrl(ch) => format!("ctrl: `{}`", ch),
+                Self::Op(op) => format!("op: `{}`", op),
+
+                Self::Const => "const".to_string(),
+                Self::Let => "let".to_string(),
+                Self::Mut => "mut".to_string(),
 
                 Self::Fn => "fn".to_string(),
 
