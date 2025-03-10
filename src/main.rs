@@ -5,6 +5,7 @@ use clap::Parser;
 use zel::{
     ast::{expr::Expr, literal::Literal, top_level::TopLevel},
     compiler::Compiler,
+    lexer::Lex,
 };
 
 #[derive(Parser, Debug, Clone)]
@@ -22,6 +23,14 @@ fn main() -> anyhow::Result<()> {
 
     let args2 = args.clone();
     let out_name = args2.out.file_name().unwrap().to_str().unwrap();
+
+    let src = fs::read_to_string(args.file)?;
+
+    let tokens = Lex::new(&src).collect::<Result<Vec<_>, _>>()?;
+    for token in tokens {
+        print!("{token}, ");
+    }
+    println!();
 
     let mut compiler = Compiler::new(out_name)?;
 

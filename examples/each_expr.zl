@@ -1,3 +1,9 @@
+/*
+This is a basic block comment that should be completely ignored
+*/
+
+// This is a line comment that should also be ignored
+
 const main = fn() -> num {
   fn() -> num {
     fn () -> num {
