@@ -15,35 +15,39 @@ pub enum TopLevelError {
 }
 
 #[derive(Default)]
-pub struct TopLevel<'src> {
-    exprs: Vec<(&'src str, Expr<'src>)>,
+pub struct TopLevel {
+    exprs: Vec<(String, Expr)>,
 }
 
-impl<'src> TopLevel<'src> {
-    pub fn populate(&mut self, expr: &Expr<'src>) -> Result<(), TopLevelError> {
-        match expr {
-            Expr::Then { first, next } => {
-                self.populate(first)?;
-                self.populate(next)
-            }
+impl TopLevel {
+    pub fn populate(&mut self, expr: Expr) -> Result<(), TopLevelError> {
+        match &expr {
             Expr::Const { name, body } => match **body {
                 Expr::Func { args: _, body: _ } => {
-                    self.exprs.push((name, *body.clone()));
-                    Ok(())
+                    self.exprs.push((name.clone(), *body.clone()));
                 }
-                _ => Err(TopLevelError::InvalidExpr(format!(
+                _ => {
+                    return Err(TopLevelError::InvalidExpr(format!(
+                        "Expressions in top level can only be `const ident = fn() {{}}`, found: {:?}",
+                        expr
+                    )));
+                }
+            },
+            Expr::Then { first, next } => {
+                self.populate(*first.clone())?;
+                self.populate(*next.clone())?;
+            }
+            _ => {
+                return Err(TopLevelError::InvalidExpr(format!(
                     "Expressions in top level can only be `const ident = fn() {{}}`, found: {:?}",
                     expr
-                ))),
-            },
-            _ => Err(TopLevelError::InvalidExpr(format!(
-                "Expressions in top level can only be `const ident = fn() {{}}`, found: {:?}",
-                expr
-            ))),
+                )));
+            }
         }
+        Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Result<&Expr<'src>, TopLevelError> {
+    pub fn get(&self, name: &str) -> Result<&Expr, TopLevelError> {
         self.exprs
             .iter()
             .find(|x| x.0 == name)
@@ -60,7 +64,7 @@ impl<'src> TopLevel<'src> {
         }
     }
 
-    pub fn finish(self) -> Vec<(&'src str, Expr<'src>)> {
+    pub fn finish(self) -> Vec<(String, Expr)> {
         self.exprs
     }
 }

@@ -1,157 +1,188 @@
 use thiserror::Error;
 
 use crate::{ast::literal::Literal, token::Token};
-use std::{iter::*, str::Chars};
 
-macro_rules! otry {
-    ($fallible:expr) => {
-        match $fallible {
-            Ok(t) => t,
-            Err(e) => return Some(Err(e.into())),
-        }
-    };
-}
-
-#[derive(Error, Debug)]
+#[derive(Error, Clone, Debug)]
 pub enum LexError {
     #[error("invalid char `{0}` found")]
     Unknown(char),
+
+    #[error("expected `{0}`, found EOF")]
+    ExpectedFoundEof(&'static str),
 }
 
-/// Utility Struct for simpler lexer control flow
-pub struct Lex<'src> {
-    cur: char,
-    iter: Peekable<Chars<'src>>,
+pub struct Lexer {
+    cur: isize,
+    src: Vec<char>,
 }
 
-impl<'src> Lex<'src> {
-    /// Build a new TokenIter from the given input
-    pub fn new(input: &'src str) -> Self {
-        Self {
-            cur: '\0',
-            iter: input.chars().peekable(),
+/// Returns whether the given char is a valid operator character
+fn op(ch: char) -> bool {
+    "*/+-=><!?".contains(ch)
+}
+
+/// Returns whether the given char is a control character
+fn ctrl(ch: char) -> bool {
+    "{}()[];,".contains(ch)
+}
+
+/// Returns whether the given char is a valid identifier char
+fn ident(ch: char) -> bool {
+    (ch.is_ascii_alphanumeric() || ch == '_') && !ch.is_whitespace()
+}
+
+impl Lexer {
+    pub fn lex(input: &str) -> Result<Vec<Token>, LexError> {
+        let mut lexer = Self {
+            cur: -1,
+            src: input.chars().collect(),
+        };
+
+        let mut tokens = vec![];
+
+        while let Some(token) = lexer.next()? {
+            tokens.push(token);
+        }
+
+        Ok(tokens)
+    }
+
+    fn expect(res: bool, err_func: impl FnOnce() -> LexError) -> Result<(), LexError> {
+        match res {
+            true => Ok(()),
+            false => Err(err_func()),
         }
     }
 
-    /// advances the text, returning the character
-    fn advance(&mut self) -> Option<()> {
-        self.cur = self.iter.next()?;
+    fn next(&mut self) -> Result<Option<Token>, LexError> {
+        if !self.advance() {
+            return Ok(None);
+        }
+        match self.get() {
+            ch if ch.is_whitespace() => self.next(),
 
-        Some(())
-    }
+            ch if ch.is_ascii_digit() => {
+                let val = Ok(Some(Token::Literal(Literal::Num(
+                    self.collect_until(|lex| !lex.get().is_ascii_digit())
+                        .1
+                        .into_iter()
+                        .collect::<String>()
+                        .parse()
+                        .unwrap(),
+                ))));
 
-    /// Simple wrapper to check if character is what is wanted
-    fn is(&mut self, ch: &char) -> bool {
-        &self.cur == ch
-    }
+                self.cur -= 1;
 
-    fn then(&mut self, ch: &char) -> bool {
-        self.iter.peek() == Some(ch)
-    }
-
-    /// Returns an iterator that will take characters while they are following the given condition
-    fn take_while(&mut self, cond: &'static dyn Fn(&char) -> bool) -> impl Iterator<Item = char> {
-        once(self.cur).chain(from_fn(|| self.iter.by_ref().next_if(|ch| cond(ch))))
-    }
-
-    fn ignore_until(&mut self, cond: impl Fn(&mut Self) -> bool) {
-        while self.advance().is_some() {
-            if cond(self) {
-                return;
+                val
             }
-        }
-    }
-}
-
-impl Iterator for Lex<'_> {
-    type Item = Result<Token, LexError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        // Move to next character
-        self.advance()?;
-
-        Some(Ok(match self.cur {
-            // Recursively call next if finding whitespace
-            ch if ch.is_whitespace() => otry!(self.next()?),
 
             '/' => {
-                self.advance()?;
-
-                if self.is(&'/') {
-                    // Ignore input until newline
-                    self.take_while(&|ch| ch != &'\n').for_each(drop);
-
-                    // Return the result of the next item
-                    otry!(self.next()?)
-                } else if self.is(&'*') {
-                    // Ignore output until following condition met
-                    self.ignore_until(|lex: &mut Lex<'_>| lex.is(&'*') && lex.then(&'/'));
-
-                    // Also ignore the '/'
-                    self.advance()?;
-                    otry!(self.next()?)
+                if self.then("/") {
+                    Lexer::expect(self.ignore_until("\n"), || {
+                        LexError::ExpectedFoundEof("\\n")
+                    })?;
+                    self.next()
+                } else if self.then("*") {
+                    Lexer::expect(self.ignore_until("*/"), || LexError::ExpectedFoundEof("*/"))?;
+                    self.next()
                 } else {
-                    Token::Op("/".to_string() + &self.take_while(&op).collect::<String>())
+                    let (_found, rest) = self.collect_until(|lex| !op(lex.get()));
+                    Ok(Some(Token::Op(rest.into_iter().collect())))
                 }
             }
 
-            // Match any control characters
-            ch if ctrl(&ch) => Token::Ctrl(ch),
+            ch if ctrl(ch) => Ok(Some(Token::Ctrl(ch))),
 
-            // Match any operators
-            ch if op(&ch) => Token::Op(self.take_while(&op).collect()),
+            ch if op(ch) => {
+                let (_found, rest) = self.collect_until(|lex| !op(lex.get()));
+                Ok(Some(Token::Op(rest.into_iter().collect())))
+            }
 
-            // Match a number and parse it into a literal
-            '0'..='9' => Token::Literal(Literal::Num(
-                self.take_while(&|ch| ch.is_ascii_digit())
-                    .collect::<String>()
-                    .parse()
-                    .expect("Collected string should be number"),
-            )),
+            ch if ident(ch) => {
+                let (_found, rest) = self.collect_until(|lex| !ident(lex.get()));
+                let ident = rest.into_iter().collect::<String>();
 
-            // Check if it could be an identifier
-            ch if ident(&ch) => {
-                // Collect the string identifier
-                let ident = self.take_while(&ident).collect::<String>();
+                self.cur -= 1;
 
-                // Check for keywords or make Ident Token
-                match ident.as_str() {
+                Ok(Some(match ident.as_str() {
                     "true" => Token::Literal(Literal::Bool(true)),
                     "false" => Token::Literal(Literal::Bool(false)),
+
+                    "if" => Token::If,
+                    "else" => Token::Else,
+
+                    "for" => Token::For,
 
                     "const" => Token::Const,
                     "let" => Token::Let,
                     "mut" => Token::Mut,
 
                     "fn" => Token::Fn,
+                    "this" => Token::This,
+                    "return" => Token::Return,
 
-                    "if" => Token::If,
-                    "else" => Token::Else,
-
-                    "for" => Token::For,
                     _ => Token::Ident(ident),
-                }
+                }))
             }
 
-            // Invalid character check, should be error eventually
-            ch => otry!(Err(LexError::Unknown(ch))),
-        }))
+            ch => Err(LexError::Unknown(ch)),
+        }
     }
-}
 
-/// Returns whether the given char is a valid operator character
-fn op(ch: &char) -> bool {
-    "*/+-=><!?".contains(*ch)
-}
+    fn advance(&mut self) -> bool {
+        self.cur += 1;
+        self.cur < self.src.len() as isize
+    }
 
-/// Returns whether the given char is a control character
-fn ctrl(ch: &char) -> bool {
-    "{}()[];,".contains(*ch)
-}
+    fn get(&mut self) -> char {
+        self.src[self.cur as usize]
+    }
 
-/// Returns whether the given char is a valid identifier char
-fn ident(ch: &char) -> bool {
-    (ch.is_ascii_alphanumeric() || ch == &'_') && !ch.is_whitespace()
+    fn is(&mut self, ch: char) -> bool {
+        self.src[self.cur as usize] == ch
+    }
+
+    fn then(&mut self, stream: &str) -> bool {
+        let start = self.cur;
+        for ch in stream.chars() {
+            if !self.advance() {
+                self.cur = start;
+                return false;
+            }
+
+            if !self.is(ch) {
+                self.cur = start;
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn ignore_until(&mut self, stream: &str) -> bool {
+        while !self.then(stream) {
+            if !self.advance() {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn collect_until(&mut self, func: impl Fn(&mut Self) -> bool) -> (bool, Vec<char>) {
+        let mut chrs = vec![self.get()];
+
+        loop {
+            if !self.advance() {
+                return (false, chrs);
+            }
+
+            if func(self) {
+                return (true, chrs);
+            }
+
+            chrs.push(self.get())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -160,27 +191,20 @@ mod test {
 
     #[test]
     fn test_comment() {
-        let tokens = Lex::new("// Hi Mom\nhi")
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
+        let tokens = Lexer::lex("// Hi Mom\nhi").unwrap();
 
         assert_eq!(vec![Token::Ident("hi".to_string())], tokens)
     }
 
     #[test]
     fn test_block_comment() {
-        let tokens = Lex::new("/* Hi Mom*/hi")
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
-
+        let tokens = Lexer::lex("/* Hi Mom*/hi").unwrap();
         assert_eq!(vec![Token::Ident("hi".to_string())], tokens)
     }
 
     #[test]
     fn test_ident() {
-        let tokens = Lex::new("_hello_world hi_mom")
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
+        let tokens = Lexer::lex("_hello_world hi_mom").unwrap();
 
         assert_eq!(
             vec![
@@ -193,9 +217,7 @@ mod test {
 
     #[test]
     fn test_keywords() {
-        let tokens = Lex::new("if else for true false")
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
+        let tokens = Lexer::lex("if else for true false").unwrap();
 
         assert_eq!(
             vec![
@@ -211,15 +233,13 @@ mod test {
 
     #[test]
     fn test_ops() {
-        let tokens = Lex::new("/+-*").map(|x| x.unwrap()).collect::<Vec<_>>();
+        let tokens = Lexer::lex("/+-*").unwrap();
         assert_eq!(vec![Token::Op("/+-*".to_string())], tokens)
     }
 
     #[test]
     fn test_nums() {
-        let tokens = Lex::new("1234567890 12 18 0")
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
+        let tokens = Lexer::lex("1234567890 12 18 0").unwrap();
 
         assert_eq!(
             vec![
@@ -234,9 +254,7 @@ mod test {
 
     #[test]
     fn test_if_else() {
-        let tokens = Lex::new("if x == 5 {} else {}")
-            .map(|x| x.unwrap())
-            .collect::<Vec<_>>();
+        let tokens = Lexer::lex("if x == 5 {} else {}").unwrap();
 
         assert_eq!(
             vec![

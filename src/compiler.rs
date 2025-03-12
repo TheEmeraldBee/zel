@@ -121,6 +121,7 @@ impl Compiler {
 
 #[derive(Copy, Clone, Debug)]
 pub enum TranslationValue {
+    Null,
     Value(Value),
     Func(FuncId),
 }
@@ -201,7 +202,7 @@ impl Translator<'_> {
             Expr::Local(var) => {
                 let var = self
                     .vars
-                    .get(var)
+                    .get(&var)
                     .ok_or_else(|| CompilerError::Missing(var.to_string()))?;
                 val(self.builder.use_var(*var))
             }
@@ -213,7 +214,7 @@ impl Translator<'_> {
                 let value = self.translate(*body)?.require_value()?;
                 let variable = self
                     .vars
-                    .get(name)
+                    .get(&name)
                     .ok_or_else(|| CompilerError::Missing(name.to_string()))?;
                 self.builder.def_var(*variable, value);
                 val(value)
@@ -284,6 +285,7 @@ impl Translator<'_> {
 
                 val(self.builder.inst_results(call)[0])
             }
+            Expr::Null => TranslationValue::Null,
             _ => todo!(),
         })
     }

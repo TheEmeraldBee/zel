@@ -1,7 +1,7 @@
 use super::{literal::Literal, ops::BinaryOp};
 
-#[derive(Debug, Clone)]
-pub enum Expr<'src> {
+#[derive(Debug, Clone, Default)]
+pub enum Expr {
     /// A literal value, something consistent throughout the language
     Literal(Literal),
 
@@ -13,23 +13,20 @@ pub enum Expr<'src> {
     },
 
     /// A comptime executable expression
-    Const { name: &'src str, body: Box<Self> },
+    Const { name: String, body: Box<Self> },
 
     /// Creation of a variable
     Let {
         mutable: bool,
-        name: &'src str,
+        name: String,
         body: Box<Self>,
     },
 
     /// A local variable identifier
-    Local(&'src str),
+    Local(String),
 
     /// A definition of a function
-    Func {
-        args: Vec<&'src str>,
-        body: Box<Self>,
-    },
+    Func { args: Vec<String>, body: Box<Self> },
 
     /// The calling of a function first is the function to call
     /// Second is the args to pass to the call
@@ -38,4 +35,8 @@ pub enum Expr<'src> {
     /// The most basic of operations, simply means to run the first, then return result of second.
     /// This allows for all functions to be continued in single expression
     Then { first: Box<Self>, next: Box<Self> },
+
+    #[default]
+    /// A basic expression meaning that this expression is a dummy and means nothing!
+    Null,
 }

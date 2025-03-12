@@ -1,14 +1,10 @@
 use std::{fs, path::PathBuf, process::Command};
 
+use anyhow::anyhow;
 use clap::Parser;
+use zel::{ast::top_level::TopLevel, compiler::Compiler, lexer::Lexer};
 
-use zel::{
-    ast::{expr::Expr, literal::Literal, top_level::TopLevel},
-    compiler::Compiler,
-    lexer::Lex,
-};
-
-#[derive(Parser, Debug, Clone)]
+#[derive(clap::Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// The file to compile
@@ -26,41 +22,21 @@ fn main() -> anyhow::Result<()> {
 
     let src = fs::read_to_string(args.file)?;
 
-    let tokens = Lex::new(&src).collect::<Result<Vec<_>, _>>()?;
-    for token in tokens {
-        println!("{token}");
-    }
+    let tokens = Lexer::lex(&src)?;
+
+    let ast = match zel::parser::Parser::parse(&tokens) {
+        Ok(t) => t,
+        Err(e) => return Err(anyhow!("{}", e.to_string())),
+    };
+
+    println!("{ast:#?}");
 
     let mut compiler = Compiler::new(out_name)?;
-
-    let ast = Expr::Const {
-        name: "main",
-        body: Box::new(Expr::Func {
-            args: vec![],
-            body: Box::new(Expr::Call {
-                func: Box::new(Expr::Func {
-                    args: vec![],
-                    body: Box::new(Expr::Call {
-                        func: Box::new(Expr::Func {
-                            args: vec![],
-                            body: Box::new(Expr::Binary {
-                                lhs: Box::new(Expr::Literal(Literal::Num(0))),
-                                op: zel::ast::ops::BinaryOp::Add,
-                                rhs: Box::new(Expr::Literal(Literal::Num(0))),
-                            }),
-                        }),
-                        args: vec![],
-                    }),
-                }),
-                args: vec![],
-            }),
-        }),
-    };
 
     let mut top_level = TopLevel::default();
 
     // Populate the top-level declarations with the generated ast
-    top_level.populate(&ast)?;
+    top_level.populate(ast)?;
 
     // Ensure, after populating the ast with functions, that the function `main` exists
     top_level.require_fn("main", vec![])?;
