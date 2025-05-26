@@ -37,6 +37,8 @@ impl TopLevel {
                 self.populate(*first.clone())?;
                 self.populate(*next.clone())?;
             }
+            // Ignore null expressions
+            Expr::Null => {}
             _ => {
                 return Err(TopLevelError::InvalidExpr(format!(
                     "Expressions in top level can only be `const ident = fn() {{}}`, found: {:?}",

@@ -1,356 +1,355 @@
-#![allow(clippy::result_unit_err)]
+use thiserror::Error;
 
-use anyhow::anyhow;
+use crate::{
+    ast::{expr::Expr, ops::BinaryOp},
+    token::Token,
+};
 
-use crate::{ast::expr::Expr, token::Token};
+#[derive(Error, Clone, Debug)]
+pub enum ParseError {
+    #[error("Expected `{0}`, found `{1}`")]
+    Expected(String, String),
 
-#[macro_export]
-macro_rules! err {
-    ($msg:expr, $expected:expr, $toks:expr) => {
-        Err(anyhow!(
-            $msg,
-            $expected,
-            $toks
-                .iter()
-                .map(|x| x.to_string())
-                .reduce(|lhs, rhs| format!("{lhs}, {rhs}"))
-                .unwrap_or_else(|| "`unknown`".to_string())
-        ))
-    };
+    #[error("expected `{0}`, found EOF")]
+    ExpectedFoundEof(String),
 }
 
-#[macro_export]
-macro_rules! any {
-    ($($par:expr),* $(,)?) => {
-        any([
-            $(($par).boxed()),*
-        ])
-    }
+pub struct Parser {
+    cur: isize,
+    toks: Vec<Token>,
 }
 
-#[macro_export]
-macro_rules! matched {
-    ($pat:pat => $expr:expr, $err:expr) => {{
-        let method = |inp, parser: &mut Parser| {
-            let tok = parser.get().clone();
-            parser.adv();
-            match tok {
-                $pat => Ok((inp, $expr)),
-                _ => Err(()),
-            }
-        };
-        (method, || $err.to_string())
-    }};
-}
-
-pub struct Parser<'src> {
-    cur: usize,
-    tokens: &'src [Token],
-
-    span_start: usize,
-}
-
-fn expr_<I: Clone + Sync + Send + 'static>() -> impl Parse<I, Expr> {
-    any![const_()]
-}
-
-fn const_<I: Clone + Sync + Send + 'static>() -> impl Parse<I, Expr> {
-    just(Token::Const)
-        .ignore_then(matched!(Token::Ident(name) => name, "ident"))
-        .then_ignore(just(Token::Op("=".to_string())))
-        .then(expr_())
-        .map(|((_, l), body)| Expr::Const {
-            name: l,
-            body: Box::new(body),
-        })
-        .labelled("expression")
-}
-
-impl<'src> Parser<'src> {
-    pub fn parse(tokens: &'src [Token]) -> anyhow::Result<Expr> {
+impl Parser {
+    pub fn parse(input: Vec<Token>) -> Result<Expr, ParseError> {
         let mut parser = Parser {
-            cur: 0,
-            tokens,
-            span_start: 0,
+            cur: -1,
+            toks: input,
         };
 
-        let parse = expr_().repeated();
+        let mut exprs = vec![];
 
-        match parse.parse((), &mut parser) {
-            Ok(t) => Ok(t
-                .into_iter()
-                .reduce(|lhs, rhs| Expr::Then {
-                    first: Box::new(lhs),
-                    next: Box::new(rhs),
-                })
-                .unwrap_or(Expr::Null)),
-            Err(_) => {
-                err!(
-                    "Expected One Of: {}\nFound: {}",
-                    parse.err_msg(),
-                    parser.tok_span()
-                )
-            }
+        while let Some(expr) = parser.expr()? {
+            exprs.push(expr);
         }
+
+        Ok(exprs
+            .into_iter()
+            .reduce(|a, v| Expr::Then {
+                first: Box::new(a),
+                next: Box::new(v),
+            })
+            .unwrap_or_default())
     }
 
-    pub fn adv(&mut self) {
+    fn advance(&mut self) -> bool {
         self.cur += 1;
+        self.cur < self.toks.len() as isize
     }
 
-    pub fn get(&self) -> &Token {
-        &self.tokens[self.cur]
+    fn expect(res: bool, err_func: impl FnOnce() -> ParseError) -> Result<(), ParseError> {
+        match res {
+            true => Ok(()),
+            false => Err(err_func()),
+        }
     }
 
-    pub fn is(&self, token: &Token) -> bool {
-        &self.tokens[self.cur] == token
+    fn get(&mut self) -> &Token {
+        &self.toks[self.cur as usize]
     }
 
-    pub fn is_end(&self) -> bool {
-        self.cur >= self.tokens.len() - 1
+    fn peek(&mut self) -> Option<&Token> {
+        self.toks.get(self.cur as usize + 1)
     }
 
-    pub fn start_span(&mut self) {
-        self.span_start = self.cur;
+    fn is(&mut self, tok: &Token) -> bool {
+        self.toks[self.cur as usize] == *tok
     }
 
-    pub fn tok_span(&self) -> &[Token] {
-        &self.tokens[self.span_start..=self.cur]
-    }
-}
-
-pub trait Boxed<I: Clone, R: Clone> {
-    fn boxed(self) -> Box<dyn Parse<I, R>>;
-}
-
-impl<I: Clone, R: Clone, P: Parse<I, R> + 'static> Boxed<I, R> for P {
-    fn boxed(self) -> Box<dyn Parse<I, R>> {
-        Box::new(self)
-    }
-}
-
-pub trait Parse<I: Send + Sync, R: Send + Sync> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<R, ()>;
-    fn err_msg(&self) -> String;
-}
-
-pub trait ParseExt<I: Send + Sync, R: Send + Sync>: Parse<I, R> {
-    fn then<T: Send + Sync>(self, then: impl Parse<R, T> + 'static) -> Then<I, R, T>;
-    fn ignore_then<T: Send + Sync>(self, then: impl Parse<I, T> + 'static) -> IgnoreThen<I, R, T>;
-    fn then_ignore<T: Send + Sync>(self, then: impl Parse<I, T> + 'static) -> ThenIgnore<I, R, T>;
-    fn ignore(self) -> Ignore<I, R>;
-    fn repeated(self) -> Repeated<I, R>;
-    fn maybe(self) -> Maybe<I, R>;
-    fn map<T: Send + Sync>(self, mapper: impl Fn(R) -> T + 'static) -> Map<I, R, T>;
-    fn rest(self) -> Rest<I, R>;
-    fn labelled(self, label: impl ToString) -> Labeled<I, R>;
-}
-
-impl<I: Send + Sync + 'static, R: Send + Sync + 'static, P: Parse<I, R> + 'static> ParseExt<I, R>
-    for P
-{
-    fn then<T: Send + Sync>(self, then: impl Parse<R, T> + 'static) -> Then<I, R, T> {
-        Then(Box::new(self), Box::new(then))
+    fn then(&mut self, tok: &Token) -> bool {
+        if (self.cur + 1) as usize >= self.toks.len() {
+            return false;
+        }
+        self.toks[(self.cur + 1) as usize] == *tok
     }
 
-    fn ignore_then<T: Send + Sync>(self, then: impl Parse<I, T> + 'static) -> IgnoreThen<I, R, T> {
-        IgnoreThen(Box::new(self), Box::new(then))
+    fn skip(&mut self, tok: &Token) -> Result<(), ParseError> {
+        Self::expect(self.advance(), || {
+            ParseError::ExpectedFoundEof(format!("{}", tok))
+        })?;
+
+        Self::expect(self.is(tok), || {
+            ParseError::Expected(tok.to_string(), self.get().to_string())
+        })?;
+
+        Ok(())
     }
 
-    fn then_ignore<T: Send + Sync>(self, then: impl Parse<I, T> + 'static) -> ThenIgnore<I, R, T> {
-        ThenIgnore(Box::new(self), Box::new(then))
+    fn expr(&mut self) -> Result<Option<Expr>, ParseError> {
+        if !self.advance() {
+            return Ok(None);
+        }
+
+        Ok(Some(self.binary_op(0)?))
     }
 
-    fn ignore(self) -> Ignore<I, R> {
-        Ignore(Box::new(self))
-    }
+    fn binary_op(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
+        let mut lhs = self.atom()?;
 
-    fn repeated(self) -> Repeated<I, R> {
-        Repeated(Box::new(self))
-    }
+        if let Some(Token::Ctrl('(')) = self.peek() {
+            self.advance();
+            let (_, args) = self.list(
+                &Token::Ctrl('('),
+                &Token::Ctrl(')'),
+                &Token::Ctrl(','),
+                Self::expr,
+                "expr".to_string(),
+            )?;
 
-    fn maybe(self) -> Maybe<I, R> {
-        Maybe(Box::new(self))
-    }
+            return Ok(Expr::Call {
+                func: Box::new(lhs),
+                args,
+            });
+        }
 
-    fn map<T: Send + Sync>(self, mapper: impl Fn(R) -> T + 'static) -> Map<I, R, T> {
-        Map(Box::new(self), Box::new(mapper))
-    }
+        while let Some(Token::Op(op)) = self.peek() {
+            if let Some(op) = BinaryOp::from_str(op) {
+                let precedence = op.precedence();
+                if precedence < min_precedence {
+                    break;
+                }
 
-    fn rest(self) -> Rest<I, R> {
-        Rest(Box::new(self))
-    }
+                self.advance();
 
-    fn labelled(self, label: impl ToString) -> Labeled<I, R> {
-        Labeled(Box::new(self), label.to_string())
-    }
-}
+                if !self.advance() {
+                    return Err(ParseError::ExpectedFoundEof("binary op | atom".to_string()));
+                }
 
-pub struct Just(Token);
-impl<I: Send + Sync> Parse<I, I> for Just {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<I, ()> {
-        parser.start_span();
-        match parser.is(&self.0) {
-            true => (),
-            false => return Err(()),
-        };
-        parser.adv();
+                let rhs = self.binary_op(precedence)?;
 
-        Ok(last)
-    }
-    fn err_msg(&self) -> String {
-        format!("{}", self.0)
-    }
-}
-
-pub fn just(token: Token) -> Just {
-    Just(token)
-}
-
-pub struct Then<I, R, T>(Box<dyn Parse<I, R>>, Box<dyn Parse<R, T>>);
-impl<I, R: Clone, T> Parse<I, (R, T)> for Then<I, R, T> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<(R, T), ()> {
-        let res = self.0.parse(last, parser)?;
-
-        Ok((res.clone(), self.1.parse(res, parser)?))
-    }
-    fn err_msg(&self) -> String {
-        format!("{} -> {}", self.0.err_msg(), self.1.err_msg())
-    }
-}
-
-pub struct IgnoreThen<I, R, T>(Box<dyn Parse<I, R>>, Box<dyn Parse<I, T>>);
-impl<I: Clone + Send + Sync, R: Send + Sync, T: Send + Sync> Parse<I, T> for IgnoreThen<I, R, T> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<T, ()> {
-        self.0.parse(last.clone(), parser)?;
-
-        self.1.parse(last, parser)
-    }
-    fn err_msg(&self) -> String {
-        format!("{} -> {}", self.0.err_msg(), self.1.err_msg())
-    }
-}
-
-pub struct ThenIgnore<I, R, T>(Box<dyn Parse<I, R>>, Box<dyn Parse<I, T>>);
-impl<I: Clone + Send + Sync, R: Send + Sync, T: Send + Sync> Parse<I, R> for ThenIgnore<I, R, T> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<R, ()> {
-        let res = self.0.parse(last.clone(), parser)?;
-
-        self.1.parse(last, parser)?;
-
-        Ok(res)
-    }
-    fn err_msg(&self) -> String {
-        format!("{} -> {}", self.0.err_msg(), self.1.err_msg())
-    }
-}
-
-pub struct Ignore<I, R>(Box<dyn Parse<I, R>>);
-impl<I: Clone + Send + Sync, R: Send + Sync> Parse<I, I> for Ignore<I, R> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<I, ()> {
-        self.0.parse(last.clone(), parser)?;
-        Ok(last)
-    }
-    fn err_msg(&self) -> String {
-        self.0.err_msg()
-    }
-}
-
-pub struct Any<I, R>(Vec<Box<dyn Parse<I, R>>>);
-impl<I: Clone + Send + Sync, R: Send + Sync> Parse<I, R> for Any<I, R> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<R, ()> {
-        let start = parser.cur;
-        for parse in &self.0 {
-            if let Ok(r) = parse.parse(last.clone(), parser) {
-                return Ok(r);
+                lhs = Expr::Binary {
+                    lhs: Box::new(lhs),
+                    op,
+                    rhs: Box::new(rhs),
+                };
             } else {
-                parser.cur = start;
+                return Err(ParseError::Expected(
+                    "+, -, *, or /".to_string(),
+                    op.to_string(),
+                ));
             }
         }
 
-        Err(())
+        Ok(lhs)
     }
-    fn err_msg(&self) -> String {
-        self.0
-            .iter()
-            .map(|x| x.err_msg())
-            .reduce(|lhs, rhs| format!("{}, {}", lhs, rhs))
-            .unwrap_or_else(|| "".to_string())
-    }
-}
 
-pub fn any<I, R>(parsers: impl IntoIterator<Item = Box<dyn Parse<I, R>>>) -> Any<I, R> {
-    Any(parsers.into_iter().collect())
-}
+    fn atom(&mut self) -> Result<Expr, ParseError> {
+        Ok(match self.get().clone() {
+            Token::Literal(l) => Expr::Literal(l.clone()),
 
-impl<I: Send + Sync, R: Send + Sync, T, E> Parse<I, R> for (T, E)
-where
-    T: Fn(I, &mut Parser) -> Result<R, ()>,
-    E: Fn() -> String,
-{
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<R, ()> {
-        self.0(last, parser)
-    }
-    fn err_msg(&self) -> String {
-        self.1().to_string()
-    }
-}
+            // This could be either a set or a local
+            Token::Ident(l) => {
+                if self.then(&Token::Op("=".to_string())) {
+                    Self::expect(self.advance(), || {
+                        ParseError::ExpectedFoundEof("expr".to_string())
+                    })?;
 
-pub struct Repeated<I, R>(Box<dyn Parse<I, R>>);
-impl<I: Clone + Send + Sync, R: Send + Sync> Parse<I, Vec<R>> for Repeated<I, R> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<Vec<R>, ()> {
+                    let Some(body) = self.expr()? else {
+                        return Err(ParseError::ExpectedFoundEof("expr".to_string()));
+                    };
+                    Expr::Set {
+                        name: l.clone(),
+                        body: Box::new(body),
+                    }
+                } else {
+                    Expr::Local(l.clone())
+                }
+            }
+            Token::Let => {
+                Self::expect(self.advance(), || {
+                    ParseError::ExpectedFoundEof("ident".to_string())
+                })?;
+
+                let mut_ = self.is(&Token::Mut);
+
+                if mut_ {
+                    Self::expect(self.advance(), || {
+                        ParseError::ExpectedFoundEof("ident".to_string())
+                    })?;
+                }
+
+                let Token::Ident(ident) = self.get().clone() else {
+                    return Err(ParseError::Expected(
+                        "ident".to_string(),
+                        format!("{}", self.get()),
+                    ));
+                };
+
+                self.skip(&Token::Op("=".to_string()))?;
+
+                let body = self.expr()?;
+                let Some(body) = body else {
+                    return Err(ParseError::ExpectedFoundEof("expr".to_string()));
+                };
+
+                Expr::Let {
+                    mutable: mut_,
+                    name: ident,
+                    body: Box::new(body),
+                }
+            }
+            Token::Const => {
+                Self::expect(self.advance(), || {
+                    ParseError::ExpectedFoundEof("ident".to_string())
+                })?;
+                let Token::Ident(ident) = self.get().clone() else {
+                    return Err(ParseError::Expected(
+                        "ident".to_string(),
+                        format!("{}", self.get()),
+                    ));
+                };
+
+                self.skip(&Token::Op("=".to_string()))?;
+
+                let body = self.expr()?;
+                let Some(body) = body else {
+                    return Err(ParseError::ExpectedFoundEof("expr".to_string()));
+                };
+
+                Expr::Const {
+                    name: ident,
+                    body: Box::new(body),
+                }
+            }
+            Token::Fn => {
+                Self::expect(self.advance(), || {
+                    ParseError::ExpectedFoundEof("args".to_string())
+                })?;
+                let (_, args) = self.list(
+                    &Token::Ctrl('('),
+                    &Token::Ctrl(')'),
+                    &Token::Ctrl(','),
+                    |p| {
+                        Self::expect(p.advance(), || {
+                            ParseError::ExpectedFoundEof("ident".to_string())
+                        })?;
+
+                        let Token::Ident(t) = p.get() else {
+                            return Err(ParseError::Expected(
+                                "ident".to_string(),
+                                p.get().to_string(),
+                            ));
+                        };
+                        Ok(Some(t.clone()))
+                    },
+                    "argument".to_string(),
+                )?;
+
+                Self::expect(self.advance(), || {
+                    ParseError::ExpectedFoundEof("block".to_string())
+                })?;
+
+                let body = self.block()?;
+
+                Expr::Func {
+                    args,
+                    body: Box::new(body),
+                }
+            }
+            Token::Ctrl('{') => Expr::Block {
+                body: Box::new(self.block()?),
+            },
+            Token::Ctrl('(') => {
+                let Some(body) = self.expr()? else {
+                    return Err(ParseError::ExpectedFoundEof("expr".to_string()));
+                };
+
+                Self::expect(self.advance(), || {
+                    ParseError::ExpectedFoundEof(Token::Ctrl(')').to_string())
+                })?;
+
+                if !self.is(&Token::Ctrl(')')) {
+                    return Err(ParseError::Expected(
+                        Token::Ctrl(')').to_string(),
+                        self.get().to_string(),
+                    ));
+                }
+
+                body
+            }
+
+            t => todo!("{t}"),
+        })
+    }
+
+    fn list<T: Default>(
+        &mut self,
+        left: &Token,
+        right: &Token,
+        separator: &Token,
+        each: impl Fn(&mut Self) -> Result<Option<T>, ParseError>,
+        item_msg: String,
+    ) -> Result<(bool, Vec<T>), ParseError> {
+        Self::expect(self.is(left), || {
+            ParseError::Expected(left.to_string(), self.get().to_string())
+        })?;
+
         let mut res = vec![];
-        while let Ok(x) = self.0.parse(last.clone(), parser) {
-            res.push(x);
+
+        let mut any = false;
+        while !self.then(right) {
+            any = true;
+            let Some(expr) = each(self)? else {
+                return Err(ParseError::ExpectedFoundEof(item_msg.clone()));
+            };
+            res.push(expr);
+
+            Self::expect(self.advance(), || {
+                ParseError::ExpectedFoundEof(separator.to_string())
+            })?;
+
+            if !self.is(separator) {
+                break;
+            }
         }
-        Ok(res)
-    }
-    fn err_msg(&self) -> String {
-        self.0.err_msg()
-    }
-}
 
-pub struct Rest<I, R>(Box<dyn Parse<I, R>>);
-impl<I: Send + Sync, R: Send + Sync> Parse<I, R> for Rest<I, R> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<R, ()> {
-        let res = self.0.parse(last, parser)?;
-        if parser.is_end() { Ok(res) } else { Err(()) }
-    }
-    fn err_msg(&self) -> String {
-        format!("EOF, {}", self.0.err_msg())
-    }
-}
+        let mut trailing = false;
 
-pub struct Labeled<I, R>(Box<dyn Parse<I, R>>, String);
-impl<I: Send + Sync, R: Send + Sync> Parse<I, R> for Labeled<I, R> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<R, ()> {
-        self.0.parse(last, parser)
-    }
-    fn err_msg(&self) -> String {
-        self.1.clone()
-    }
-}
-
-pub struct Maybe<I, R>(Box<dyn Parse<I, R>>);
-impl<I: Send + Sync, R: Send + Sync> Parse<I, Option<R>> for Maybe<I, R> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<Option<R>, ()> {
-        match self.0.parse(last, parser) {
-            Ok(t) => Ok(Some(t)),
-            Err(_) => Ok(None),
+        if self.is(separator) {
+            trailing = true;
         }
-    }
-    fn err_msg(&self) -> String {
-        self.0.err_msg()
-    }
-}
 
-pub struct Map<I, R, P>(Box<dyn Parse<I, R>>, Box<dyn Fn(R) -> P>);
-impl<I: Send + Sync, R: Send + Sync, P: Send + Sync> Parse<I, P> for Map<I, R, P> {
-    fn parse(&self, last: I, parser: &mut Parser) -> Result<P, ()> {
-        let res = self.0.parse(last, parser)?;
-        Ok(self.1(res))
+        if self.is(separator) || !any {
+            Self::expect(self.advance(), || {
+                ParseError::ExpectedFoundEof(right.to_string())
+            })?;
+        }
+
+        Self::expect(self.is(right), || {
+            ParseError::Expected(right.to_string(), self.get().to_string())
+        })?;
+
+        Ok((trailing, res))
     }
-    fn err_msg(&self) -> String {
-        "".to_string()
+
+    fn block(&mut self) -> Result<Expr, ParseError> {
+        let (trailing, mut res) = self.list(
+            &Token::Ctrl('{'),
+            &Token::Ctrl('}'),
+            &Token::Ctrl(';'),
+            Self::expr,
+            "expr".to_string(),
+        )?;
+
+        if trailing {
+            res.push(Expr::Null);
+        }
+
+        Ok(res
+            .into_iter()
+            .reduce(|a, v| Expr::Then {
+                first: Box::new(a),
+                next: Box::new(v),
+            })
+            .unwrap_or_default())
     }
 }

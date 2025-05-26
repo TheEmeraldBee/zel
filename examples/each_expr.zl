@@ -4,4 +4,14 @@ This is a basic block comment that should be completely ignored
 
 // This is a line comment that should also be ignored
 
-const main = fn() { 12 };
+const main = fn() {
+  1 + 5 + 2 / 5;
+  let mut a = 5;
+  a = a + 10;
+
+  let x = fn(a, b) {
+    a + b
+  };
+
+  a + x(5, 10)
+}

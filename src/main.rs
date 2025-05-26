@@ -17,21 +17,16 @@ struct Args {
 fn main() -> anyhow::Result<()> {
     let mut args = Args::parse();
 
-    let args2 = args.clone();
-    let out_name = args2.out.file_name().unwrap().to_str().unwrap();
+    let out_name = args.out.file_name().unwrap().to_str().unwrap();
 
     let src = fs::read_to_string(args.file)?;
 
     let tokens = Lexer::lex(&src)?;
 
-    let ast = match zel::parser::Parser::parse(&tokens) {
+    let ast = match zel::parser::Parser::parse(tokens) {
         Ok(t) => t,
         Err(e) => return Err(anyhow!("{}", e.to_string())),
     };
-
-    println!("{ast:#?}");
-
-    let mut compiler = Compiler::new(out_name)?;
 
     let mut top_level = TopLevel::default();
 
@@ -41,8 +36,11 @@ fn main() -> anyhow::Result<()> {
     // Ensure, after populating the ast with functions, that the function `main` exists
     top_level.require_fn("main", vec![])?;
 
+    let mut compiler = Compiler::new(out_name, "x86_64-linux-unknown")?;
+
     // Compile each expression in the top-level
     for (name, expr) in top_level.finish() {
+        println!("Compiling: {name} => {expr}");
         compiler.compile(name, expr)?;
     }
 

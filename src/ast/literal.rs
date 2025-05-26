@@ -8,8 +8,6 @@ pub enum Literal {
     Bool(bool),
 }
 
-impl Literal {}
-
 impl Debug for Literal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self)

@@ -8,6 +8,26 @@ pub enum BinaryOp {
     Div,
 }
 
+impl BinaryOp {
+    pub fn from_str(string: impl AsRef<str>) -> Option<BinaryOp> {
+        let string = string.as_ref();
+        Some(match string {
+            "+" => BinaryOp::Add,
+            "-" => BinaryOp::Sub,
+            "*" => BinaryOp::Mul,
+            "/" => BinaryOp::Div,
+            _ => return None,
+        })
+    }
+
+    pub fn precedence(&self) -> u8 {
+        match self {
+            BinaryOp::Add | BinaryOp::Sub => 1,
+            BinaryOp::Mul | BinaryOp::Div => 2,
+        }
+    }
+}
+
 impl Display for BinaryOp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
