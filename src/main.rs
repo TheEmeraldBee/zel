@@ -38,11 +38,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut compiler = Compiler::new(out_name, "x86_64-linux-unknown")?;
 
-    // Compile each expression in the top-level
-    for (name, expr) in top_level.finish() {
-        println!("Compiling: {name} => {expr}");
-        compiler.compile(name, expr)?;
-    }
+    compiler.compile_top_level(top_level)?;
+    compiler.compile_funcs()?;
 
     let path = args.out.clone();
 

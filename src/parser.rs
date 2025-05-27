@@ -112,7 +112,7 @@ impl Parser {
         }
 
         while let Some(Token::Op(op)) = self.peek() {
-            if let Some(op) = BinaryOp::from_str(op) {
+            if let Some(op) = BinaryOp::parsed(op) {
                 let precedence = op.precedence();
                 if precedence < min_precedence {
                     break;

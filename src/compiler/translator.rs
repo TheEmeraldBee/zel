@@ -60,8 +60,8 @@ impl Translator<'_> {
 
     pub fn declare_variable(&mut self, mutable: bool, name: String) -> Variable {
         let var = Variable::new(self.var_id);
-        if !self.vars.contains_key(&name) {
-            self.vars.insert(name, (mutable, VarType::Value(var)));
+        if let std::collections::hash_map::Entry::Vacant(e) = self.vars.entry(name) {
+            e.insert((mutable, VarType::Value(var)));
             self.builder.declare_var(var, types::I64);
             self.var_id += 1;
         }

@@ -9,7 +9,7 @@ pub enum BinaryOp {
 }
 
 impl BinaryOp {
-    pub fn from_str(string: impl AsRef<str>) -> Option<BinaryOp> {
+    pub fn parsed(string: impl AsRef<str>) -> Option<BinaryOp> {
         let string = string.as_ref();
         Some(match string {
             "+" => BinaryOp::Add,

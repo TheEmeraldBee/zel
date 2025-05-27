@@ -75,7 +75,7 @@ impl Display for Expr {
                 Expr::Call { func, args } => format!("call_{func}{args:?}"),
                 Expr::Block { body } => format!("{{{body}}}"),
                 Expr::Then { first, next } => format!("{first};{next}"),
-                Expr::Null => format!("null"),
+                Expr::Null => "null".to_string(),
             }
         )
     }
