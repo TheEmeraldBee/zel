@@ -33,6 +33,12 @@ pub enum Expr {
     /// A definition of a function
     Func { args: Vec<String>, body: Box<Self> },
 
+    If {
+        cond: Box<Self>,
+        body: Box<Self>,
+        else_: Option<Box<Self>>,
+    },
+
     /// The calling of a function first is the function to call
     /// Second is the args to pass to the call
     Call { func: Box<Self>, args: Vec<Self> },
@@ -72,6 +78,7 @@ impl Display for Expr {
                 Expr::Set { name, body } => format!("{name}={body}"),
                 Expr::Local(v) => format!("var_{v}"),
                 Expr::Func { args, body } => format!("func({args:?}{body})"),
+                Expr::If { cond, body, else_ } => format!("if({cond})=>{body}|{else_:?}"),
                 Expr::Call { func, args } => format!("call_{func}{args:?}"),
                 Expr::Block { body } => format!("{{{body}}}"),
                 Expr::Then { first, next } => format!("{first};{next}"),

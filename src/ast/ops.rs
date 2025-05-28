@@ -6,6 +6,12 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Eq,
+    Ne,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
 }
 
 impl BinaryOp {
@@ -16,12 +22,25 @@ impl BinaryOp {
             "-" => BinaryOp::Sub,
             "*" => BinaryOp::Mul,
             "/" => BinaryOp::Div,
+            "==" => BinaryOp::Eq,
+            "!=" => BinaryOp::Ne,
+            "<" => BinaryOp::Lt,
+            "<=" => BinaryOp::Lte,
+            ">" => BinaryOp::Gt,
+            ">=" => BinaryOp::Gte,
             _ => return None,
         })
     }
 
     pub fn precedence(&self) -> u8 {
         match self {
+            BinaryOp::Eq
+            | BinaryOp::Ne
+            | BinaryOp::Lt
+            | BinaryOp::Lte
+            | BinaryOp::Gt
+            | BinaryOp::Gte => 0,
+
             BinaryOp::Add | BinaryOp::Sub => 1,
             BinaryOp::Mul | BinaryOp::Div => 2,
         }
@@ -38,6 +57,12 @@ impl Display for BinaryOp {
                 Self::Sub => "-",
                 Self::Mul => "*",
                 Self::Div => "/",
+                Self::Eq => "==",
+                BinaryOp::Ne => "!=",
+                BinaryOp::Lt => "<",
+                BinaryOp::Lte => "<=",
+                BinaryOp::Gt => ">",
+                BinaryOp::Gte => ">=",
             }
         )
     }

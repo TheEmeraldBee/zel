@@ -5,6 +5,7 @@ use crate::ast::literal::Literal;
 
 use super::error::CompilerError;
 use super::val::*;
+use cranelift::codegen::ir::BlockArg;
 use cranelift::module::{FuncId, Module};
 use cranelift::object::ObjectModule;
 use cranelift::prelude::*;
@@ -123,7 +124,7 @@ impl Translator<'_> {
             Expr::Literal(v) => match v {
                 Literal::Num(n) => val(self.builder.ins().iconst(types::I64, n)),
                 Literal::Bool(b) => val(self.builder.ins().iconst(
-                    types::I8,
+                    types::I64,
                     match b {
                         true => 1,
                         false => 0,
@@ -241,6 +242,81 @@ impl Translator<'_> {
                 let call = self.builder.ins().call(func_ref, &solved_args);
 
                 val(self.builder.inst_results(call)[0])
+            }
+            Expr::If { cond, body, else_ } => {
+                let condition_value = self.translate(*cond)?.require_value()?;
+
+                if let Some(else_) = else_ {
+                    let then_block = self.builder.create_block();
+                    let else_block = self.builder.create_block();
+                    let merge_block = self.builder.create_block();
+
+                    // If-else constructs in the toy language have a return value.
+                    // In traditional SSA form, this would produce a PHI between
+                    // the then and else bodies. Cranelift uses block parameters,
+                    // so set up a parameter in the merge block, and we'll pass
+                    // the return values to it from the branches.
+                    self.builder.append_block_param(merge_block, types::I64);
+
+                    // Test the if condition and conditionally branch.
+                    self.builder
+                        .ins()
+                        .brif(condition_value, then_block, &[], else_block, &[]);
+
+                    self.builder.switch_to_block(then_block);
+                    self.builder.seal_block(then_block);
+                    let then_return = self.translate(*body)?.require_value()?;
+
+                    // Jump to the merge block, passing it the block return value.
+                    self.builder
+                        .ins()
+                        .jump(merge_block, &[BlockArg::Value(then_return)]);
+
+                    self.builder.switch_to_block(else_block);
+                    self.builder.seal_block(else_block);
+                    let else_ret = self.translate(*else_)?.require_value()?;
+
+                    // Jump to the merge block, passing it the block return value.
+                    self.builder
+                        .ins()
+                        .jump(merge_block, &[BlockArg::Value(else_ret)]);
+
+                    // Switch to the merge block for subsequent statements.
+                    self.builder.switch_to_block(merge_block);
+
+                    // We've now seen all the predecessors of the merge block.
+                    self.builder.seal_block(merge_block);
+
+                    // Read the value of the if-else by reading the merge block
+                    // parameter.
+                    let phi = self.builder.block_params(merge_block)[0];
+
+                    val(phi)
+                } else {
+                    let then_block = self.builder.create_block();
+                    let merge_block = self.builder.create_block();
+
+                    // Test the if condition and conditionally branch.
+                    self.builder
+                        .ins()
+                        .brif(condition_value, then_block, &[], then_block, &[]);
+
+                    self.builder.switch_to_block(then_block);
+                    self.builder.seal_block(then_block);
+                    self.translate(*body)?.require_value()?;
+
+                    // Jump to the merge block, passing it the block return value.
+                    self.builder.ins().jump(merge_block, &[]);
+
+                    // Switch to the merge block for subsequent statements.
+                    self.builder.switch_to_block(merge_block);
+
+                    // We've now seen all the predecessors of the merge block.
+                    self.builder.seal_block(merge_block);
+
+                    let ret = self.builder.ins().iconst(types::I64, 0);
+                    val(ret)
+                }
             }
             Expr::Null => TranslationValue::Null,
             _ => todo!(),

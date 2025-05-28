@@ -163,6 +163,8 @@ impl Compiler {
     ) -> Result<(), CompilerError> {
         self.ctx.func.signature = sig;
 
+        println!("Compiling function: {}", body);
+
         let mut builder = FunctionBuilder::new(&mut self.ctx.func, &mut self.builder_context);
 
         let entry_block = builder.create_block();

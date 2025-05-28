@@ -5,11 +5,13 @@ This is a basic block comment that should be completely ignored
 // This is a line comment that should also be ignored
 
 const main = fn() {
-  let mut a = 5;
-  a = add(a, 15);
-  a
+  fib(8)
 }
 
-const add = fn(a, b) {
-  a + b
+const fib = fn(n) {
+  if n <= 1 {
+    n
+  } else {
+    fib(n - 2) + fib(n - 1)
+  }
 }

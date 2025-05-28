@@ -45,6 +45,26 @@ impl TranslationValue {
             BinaryOp::Sub => translator.builder.ins().isub(lhs, rhs),
             BinaryOp::Mul => translator.builder.ins().imul(lhs, rhs),
             BinaryOp::Div => translator.builder.ins().sdiv(lhs, rhs),
+            BinaryOp::Eq => translator.builder.ins().icmp(IntCC::Equal, lhs, rhs),
+            BinaryOp::Ne => translator.builder.ins().icmp(IntCC::NotEqual, lhs, rhs),
+            BinaryOp::Lt => translator
+                .builder
+                .ins()
+                .icmp(IntCC::SignedLessThan, lhs, rhs),
+            BinaryOp::Lte => translator
+                .builder
+                .ins()
+                .icmp(IntCC::SignedLessThanOrEqual, lhs, rhs),
+            BinaryOp::Gt => translator
+                .builder
+                .ins()
+                .icmp(IntCC::SignedGreaterThan, lhs, rhs),
+            BinaryOp::Gte => {
+                translator
+                    .builder
+                    .ins()
+                    .icmp(IntCC::SignedGreaterThanOrEqual, lhs, rhs)
+            }
         }))
     }
 }

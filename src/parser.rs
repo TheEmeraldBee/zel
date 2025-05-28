@@ -46,22 +46,33 @@ impl Parser {
         self.cur < self.toks.len() as isize
     }
 
-    fn expect(res: bool, err_func: impl FnOnce() -> ParseError) -> Result<(), ParseError> {
-        match res {
-            true => Ok(()),
-            false => Err(err_func()),
+    fn expect_advance(&mut self, err_val: impl ToString) -> Result<(), ParseError> {
+        if self.advance() {
+            Ok(())
+        } else {
+            Err(ParseError::ExpectedFoundEof(err_val.to_string()))
         }
     }
 
-    fn get(&mut self) -> &Token {
+    fn expect(&self, token: &Token) -> Result<(), ParseError> {
+        match self.is(token) {
+            true => Ok(()),
+            false => Err(ParseError::Expected(
+                token.to_string(),
+                self.get().to_string(),
+            )),
+        }
+    }
+
+    fn get(&self) -> &Token {
         &self.toks[self.cur as usize]
     }
 
-    fn peek(&mut self) -> Option<&Token> {
+    fn peek(&self) -> Option<&Token> {
         self.toks.get(self.cur as usize + 1)
     }
 
-    fn is(&mut self, tok: &Token) -> bool {
+    fn is(&self, tok: &Token) -> bool {
         self.toks[self.cur as usize] == *tok
     }
 
@@ -73,13 +84,9 @@ impl Parser {
     }
 
     fn skip(&mut self, tok: &Token) -> Result<(), ParseError> {
-        Self::expect(self.advance(), || {
-            ParseError::ExpectedFoundEof(format!("{}", tok))
-        })?;
+        self.expect_advance(tok)?;
 
-        Self::expect(self.is(tok), || {
-            ParseError::Expected(tok.to_string(), self.get().to_string())
-        })?;
+        self.expect(tok)?;
 
         Ok(())
     }
@@ -95,47 +102,50 @@ impl Parser {
     fn binary_op(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
         let mut lhs = self.atom()?;
 
-        if let Some(Token::Ctrl('(')) = self.peek() {
-            self.advance();
-            let (_, args) = self.list(
-                &Token::Ctrl('('),
-                &Token::Ctrl(')'),
-                &Token::Ctrl(','),
-                Self::expr,
-                "expr".to_string(),
-            )?;
+        while let Some(tok) = self.peek() {
+            if let Token::Op(op) = tok {
+                if let Some(op) = BinaryOp::parsed(op) {
+                    println!("{lhs}");
+                    let precedence = op.precedence();
+                    if precedence < min_precedence {
+                        break;
+                    }
 
-            return Ok(Expr::Call {
-                func: Box::new(lhs),
-                args,
-            });
-        }
+                    self.advance();
 
-        while let Some(Token::Op(op)) = self.peek() {
-            if let Some(op) = BinaryOp::parsed(op) {
-                let precedence = op.precedence();
-                if precedence < min_precedence {
-                    break;
+                    if !self.advance() {
+                        return Err(ParseError::ExpectedFoundEof("binary op | atom".to_string()));
+                    }
+
+                    let rhs = self.binary_op(precedence)?;
+
+                    lhs = Expr::Binary {
+                        lhs: Box::new(lhs),
+                        op,
+                        rhs: Box::new(rhs),
+                    };
+                } else {
+                    return Err(ParseError::Expected(
+                        "+, -, *, /, ==, !=, <=, >=, >, or <".to_string(),
+                        op.to_string(),
+                    ));
                 }
-
+            } else if tok == &Token::Ctrl('(') {
                 self.advance();
+                let (_, args) = self.list(
+                    &Token::Ctrl('('),
+                    &Token::Ctrl(')'),
+                    &Token::Ctrl(','),
+                    Self::expr,
+                    "expr".to_string(),
+                )?;
 
-                if !self.advance() {
-                    return Err(ParseError::ExpectedFoundEof("binary op | atom".to_string()));
-                }
-
-                let rhs = self.binary_op(precedence)?;
-
-                lhs = Expr::Binary {
-                    lhs: Box::new(lhs),
-                    op,
-                    rhs: Box::new(rhs),
+                lhs = Expr::Call {
+                    func: Box::new(lhs),
+                    args,
                 };
             } else {
-                return Err(ParseError::Expected(
-                    "+, -, *, or /".to_string(),
-                    op.to_string(),
-                ));
+                break;
             }
         }
 
@@ -149,9 +159,7 @@ impl Parser {
             // This could be either a set or a local
             Token::Ident(l) => {
                 if self.then(&Token::Op("=".to_string())) {
-                    Self::expect(self.advance(), || {
-                        ParseError::ExpectedFoundEof("expr".to_string())
-                    })?;
+                    self.expect_advance("expr")?;
 
                     let Some(body) = self.expr()? else {
                         return Err(ParseError::ExpectedFoundEof("expr".to_string()));
@@ -165,16 +173,12 @@ impl Parser {
                 }
             }
             Token::Let => {
-                Self::expect(self.advance(), || {
-                    ParseError::ExpectedFoundEof("ident".to_string())
-                })?;
+                self.expect_advance("ident")?;
 
                 let mut_ = self.is(&Token::Mut);
 
                 if mut_ {
-                    Self::expect(self.advance(), || {
-                        ParseError::ExpectedFoundEof("ident".to_string())
-                    })?;
+                    self.expect_advance("ident")?;
                 }
 
                 let Token::Ident(ident) = self.get().clone() else {
@@ -198,9 +202,7 @@ impl Parser {
                 }
             }
             Token::Const => {
-                Self::expect(self.advance(), || {
-                    ParseError::ExpectedFoundEof("ident".to_string())
-                })?;
+                self.expect_advance("expr")?;
                 let Token::Ident(ident) = self.get().clone() else {
                     return Err(ParseError::Expected(
                         "ident".to_string(),
@@ -221,17 +223,13 @@ impl Parser {
                 }
             }
             Token::Fn => {
-                Self::expect(self.advance(), || {
-                    ParseError::ExpectedFoundEof("args".to_string())
-                })?;
+                self.expect_advance("args")?;
                 let (_, args) = self.list(
                     &Token::Ctrl('('),
                     &Token::Ctrl(')'),
                     &Token::Ctrl(','),
                     |p| {
-                        Self::expect(p.advance(), || {
-                            ParseError::ExpectedFoundEof("ident".to_string())
-                        })?;
+                        p.expect_advance("ident")?;
 
                         let Token::Ident(t) = p.get() else {
                             return Err(ParseError::Expected(
@@ -244,9 +242,7 @@ impl Parser {
                     "argument".to_string(),
                 )?;
 
-                Self::expect(self.advance(), || {
-                    ParseError::ExpectedFoundEof("block".to_string())
-                })?;
+                self.expect_advance("block")?;
 
                 let body = self.block()?;
 
@@ -255,6 +251,34 @@ impl Parser {
                     body: Box::new(body),
                 }
             }
+            Token::If => {
+                let Some(cond) = self.expr()? else {
+                    return Err(ParseError::Expected(
+                        "expr".to_string(),
+                        self.get().to_string(),
+                    ));
+                };
+
+                self.expect_advance("block")?;
+                let body = self.block()?;
+
+                let mut else_ = None;
+
+                if self.then(&Token::Else) {
+                    self.advance();
+                    self.expect_advance("block")?;
+                    let after = self.block()?;
+
+                    else_ = Some(after)
+                }
+
+                Expr::If {
+                    cond: Box::new(cond),
+                    body: Box::new(body),
+                    else_: else_.map(Box::new),
+                }
+            }
+
             Token::Ctrl('{') => Expr::Block {
                 body: Box::new(self.block()?),
             },
@@ -263,9 +287,7 @@ impl Parser {
                     return Err(ParseError::ExpectedFoundEof("expr".to_string()));
                 };
 
-                Self::expect(self.advance(), || {
-                    ParseError::ExpectedFoundEof(Token::Ctrl(')').to_string())
-                })?;
+                self.expect_advance(")")?;
 
                 if !self.is(&Token::Ctrl(')')) {
                     return Err(ParseError::Expected(
@@ -289,9 +311,7 @@ impl Parser {
         each: impl Fn(&mut Self) -> Result<Option<T>, ParseError>,
         item_msg: String,
     ) -> Result<(bool, Vec<T>), ParseError> {
-        Self::expect(self.is(left), || {
-            ParseError::Expected(left.to_string(), self.get().to_string())
-        })?;
+        self.expect(left)?;
 
         let mut res = vec![];
 
@@ -303,9 +323,7 @@ impl Parser {
             };
             res.push(expr);
 
-            Self::expect(self.advance(), || {
-                ParseError::ExpectedFoundEof(separator.to_string())
-            })?;
+            self.expect_advance(separator)?;
 
             if !self.is(separator) {
                 break;
@@ -319,14 +337,10 @@ impl Parser {
         }
 
         if self.is(separator) || !any {
-            Self::expect(self.advance(), || {
-                ParseError::ExpectedFoundEof(right.to_string())
-            })?;
+            self.expect_advance(right)?;
         }
 
-        Self::expect(self.is(right), || {
-            ParseError::Expected(right.to_string(), self.get().to_string())
-        })?;
+        self.expect(right)?;
 
         Ok((trailing, res))
     }
