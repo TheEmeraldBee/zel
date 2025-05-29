@@ -5,6 +5,8 @@ use cranelift::{
 };
 use thiserror::Error;
 
+use crate::semantic::SemanticError;
+
 /// Represents an error that may be thrown by any method in the compiler
 #[derive(Error, Debug)]
 pub enum CompilerError {
@@ -30,5 +32,8 @@ pub enum CompilerError {
     InvalidType(String),
 
     #[error("Trying to mutate `{0}`, but it is immutable")]
-    MutationError(String),
+    Mutation(String),
+
+    #[error(transparent)]
+    Semantic(#[from] SemanticError),
 }

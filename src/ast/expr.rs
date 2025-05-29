@@ -14,9 +14,6 @@ pub enum Expr {
         rhs: Box<Self>,
     },
 
-    /// A comptime executable expression
-    Const { name: String, body: Box<Self> },
-
     /// Creation of a variable
     Let {
         mutable: bool,
@@ -31,7 +28,13 @@ pub enum Expr {
     Local(String),
 
     /// A definition of a function
-    Func { args: Vec<String>, body: Box<Self> },
+    Func {
+        /// args are an array of idents and types
+        /// types in `zel` are comptime executable exprs,
+        /// which to the AST are just exprs!
+        args: Vec<(String, Expr)>,
+        body: Box<Self>,
+    },
 
     If {
         cond: Box<Self>,
@@ -63,7 +66,6 @@ impl Display for Expr {
             match self {
                 Expr::Literal(l) => l.to_string(),
                 Expr::Binary { lhs, op, rhs } => format!("({lhs}{op}{rhs})"),
-                Expr::Const { name, body } => format!("const_{name}={body}"),
                 Expr::Let {
                     mutable,
                     name,

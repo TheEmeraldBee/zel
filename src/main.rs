@@ -2,7 +2,10 @@ use std::{fs, path::PathBuf, process::Command};
 
 use anyhow::anyhow;
 use clap::Parser;
-use zel::{ast::top_level::TopLevel, compiler::Compiler, lexer::Lexer};
+use zel::{
+    ast::top_level::TopLevel, compiler::Compiler, comptime::Comptime, lexer::Lexer,
+    semantic::SemanticSolver,
+};
 
 #[derive(clap::Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
@@ -29,6 +32,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut top_level = TopLevel::default();
+    let mut semantic_analyzer = SemanticSolver::new(Comptime::default());
 
     // Populate the top-level declarations with the generated ast
     top_level.populate(ast)?;
@@ -38,8 +42,8 @@ fn main() -> anyhow::Result<()> {
 
     let mut compiler = Compiler::new(out_name, "x86_64-linux-unknown")?;
 
-    compiler.compile_top_level(top_level)?;
-    compiler.compile_funcs()?;
+    compiler.compile_top_level(top_level, &mut semantic_analyzer)?;
+    compiler.compile_funcs(&mut semantic_analyzer)?;
 
     let path = args.out.clone();
 

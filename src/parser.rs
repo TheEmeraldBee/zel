@@ -201,27 +201,6 @@ impl Parser {
                     body: Box::new(body),
                 }
             }
-            Token::Const => {
-                self.expect_advance("expr")?;
-                let Token::Ident(ident) = self.get().clone() else {
-                    return Err(ParseError::Expected(
-                        "ident".to_string(),
-                        format!("{}", self.get()),
-                    ));
-                };
-
-                self.skip(&Token::Op("=".to_string()))?;
-
-                let body = self.expr()?;
-                let Some(body) = body else {
-                    return Err(ParseError::ExpectedFoundEof("expr".to_string()));
-                };
-
-                Expr::Const {
-                    name: ident,
-                    body: Box::new(body),
-                }
-            }
             Token::Fn => {
                 self.expect_advance("args")?;
                 let (_, args) = self.list(
@@ -231,13 +210,20 @@ impl Parser {
                     |p| {
                         p.expect_advance("ident")?;
 
-                        let Token::Ident(t) = p.get() else {
+                        let Token::Ident(t) = p.get().clone() else {
                             return Err(ParseError::Expected(
                                 "ident".to_string(),
                                 p.get().to_string(),
                             ));
                         };
-                        Ok(Some(t.clone()))
+
+                        p.skip(&Token::Ctrl(':'))?;
+
+                        let Some(type_) = p.expr()? else {
+                            return Err(ParseError::ExpectedFoundEof("expr".to_string()));
+                        };
+
+                        Ok(Some((t, type_)))
                     },
                     "argument".to_string(),
                 )?;

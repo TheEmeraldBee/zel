@@ -22,7 +22,11 @@ pub struct TopLevel {
 impl TopLevel {
     pub fn populate(&mut self, expr: Expr) -> Result<(), TopLevelError> {
         match &expr {
-            Expr::Const { name, body } => match **body {
+            Expr::Let {
+                name,
+                body,
+                mutable: false,
+            } => match **body {
                 Expr::Func { args: _, body: _ } => {
                     self.exprs.push((name.clone(), *body.clone()));
                 }
@@ -41,7 +45,7 @@ impl TopLevel {
             Expr::Null => {}
             _ => {
                 return Err(TopLevelError::InvalidExpr(format!(
-                    "Expressions in top level can only be `const ident = fn() {{}}`, found: {:?}",
+                    "Expressions in top level can only be `let ident = fn() {{}}`, found: {:?}",
                     expr
                 )));
             }
@@ -59,7 +63,8 @@ impl TopLevel {
 
     pub fn require_fn(&self, name: &str, req_args: Vec<&str>) -> Result<(), TopLevelError> {
         let expr = self.get(name)?;
-        if matches!(expr, Expr::Func { args, body: _ } if *args == req_args) {
+        if matches!(expr, Expr::Func { args, body: _ } if args.iter().map(|x| &x.0).collect::<Vec<_>>() == req_args)
+        {
             Ok(())
         } else {
             Err(TopLevelError::RequiredFn(name.to_string()))

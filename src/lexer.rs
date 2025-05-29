@@ -23,7 +23,7 @@ fn op(ch: char) -> bool {
 
 /// Returns whether the given char is a control character
 fn ctrl(ch: char) -> bool {
-    "{}()[];,".contains(ch)
+    "{}()[]:;,".contains(ch)
 }
 
 /// Returns whether the given char is a valid identifier char
@@ -113,7 +113,6 @@ impl Lexer {
 
                     "for" => Token::For,
 
-                    "const" => Token::Const,
                     "let" => Token::Let,
                     "mut" => Token::Mut,
 

@@ -4,11 +4,11 @@ This is a basic block comment that should be completely ignored
 
 // This is a line comment that should also be ignored
 
-const main = fn() {
+let main = fn() {
   fib(8)
 }
 
-const fib = fn(n) {
+let fib = fn(n: int(64)) {
   if n <= 1 {
     n
   } else {

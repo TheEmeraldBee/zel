@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use crate::ast::expr::Expr;
 use crate::ast::literal::Literal;
+use crate::semantic::SemanticSolver;
+use crate::types::CompType;
 
 use super::error::CompilerError;
 use super::val::*;
@@ -43,6 +45,7 @@ pub struct Translator<'a> {
     pub builder: FunctionBuilder<'a>,
     pub vars: HashMap<String, (bool, VarType)>,
     pub module: &'a mut ObjectModule,
+    pub sem: &'a mut SemanticSolver,
     pub var_id: usize,
 }
 
@@ -51,19 +54,19 @@ impl Translator<'_> {
         self.builder.finalize();
     }
 
-    pub fn declare_args(&mut self, args: Vec<String>, entry_block: Block) {
-        for (i, arg) in args.into_iter().enumerate() {
+    pub fn declare_args(&mut self, args: Vec<(String, Type)>, entry_block: Block) {
+        for (i, (arg, type_)) in args.into_iter().enumerate() {
             let val = self.builder.block_params(entry_block)[i];
-            let var = self.declare_variable(false, arg);
+            let var = self.declare_variable(false, arg, type_);
             self.builder.def_var(var, val);
         }
     }
 
-    pub fn declare_variable(&mut self, mutable: bool, name: String) -> Variable {
+    pub fn declare_variable(&mut self, mutable: bool, name: String, type_: Type) -> Variable {
         let var = Variable::new(self.var_id);
         if let std::collections::hash_map::Entry::Vacant(e) = self.vars.entry(name) {
             e.insert((mutable, VarType::Value(var)));
-            self.builder.declare_var(var, types::I64);
+            self.builder.declare_var(var, type_);
             self.var_id += 1;
         }
         var
@@ -73,6 +76,7 @@ impl Translator<'_> {
         &mut self,
         mutable: bool,
         name: String,
+        type_: CompType,
         val: TranslationValue,
     ) -> Result<(), CompilerError> {
         match val {
@@ -82,7 +86,7 @@ impl Translator<'_> {
                 ));
             }
             TranslationValue::Value(v) => {
-                let var = self.declare_variable(mutable, name);
+                let var = self.declare_variable(mutable, name, type_.as_type().unwrap());
                 self.builder.def_var(var, v);
             }
             TranslationValue::Func(f) => {
@@ -99,7 +103,7 @@ impl Translator<'_> {
             .ok_or(CompilerError::Missing(name.clone()))?;
 
         if !*mutable {
-            return Err(CompilerError::MutationError(name));
+            return Err(CompilerError::Mutation(name));
         }
         match val {
             TranslationValue::Null => {
@@ -120,11 +124,12 @@ impl Translator<'_> {
     }
 
     pub fn translate(&mut self, expr: Expr) -> Result<TranslationValue, CompilerError> {
+        let expr_type = self.sem.type_of(&expr)?;
         Ok(match expr {
             Expr::Literal(v) => match v {
-                Literal::Num(n) => val(self.builder.ins().iconst(types::I64, n)),
+                Literal::Num(n) => val(self.builder.ins().iconst(expr_type.as_type().unwrap(), n)),
                 Literal::Bool(b) => val(self.builder.ins().iconst(
-                    types::I64,
+                    Type::int(8).unwrap(),
                     match b {
                         true => 1,
                         false => 0,
@@ -159,26 +164,33 @@ impl Translator<'_> {
                 name,
                 body,
             } => {
+                let type_ = self.sem.type_of(&body)?;
                 let value = self.translate(*body)?;
-                self.new_var(mutable, name, value)?;
+                self.new_var(mutable, name, type_, value)?;
                 TranslationValue::Null
             }
             Expr::Func { args, body } => {
+                let CompType::Function(arg_types, body_type) = expr_type else {
+                    unreachable!("Function should be correctly typed");
+                };
+
                 let mut new_ctx = self.module.make_context();
 
-                for _arg in args.iter() {
+                let mut solved_args = vec![];
+                for ((name, _), type_) in args.iter().zip(arg_types.into_iter()) {
+                    solved_args.push((name.clone(), type_.as_type().unwrap()));
                     new_ctx
                         .func
                         .signature
                         .params
-                        .push(AbiParam::new(types::I64));
+                        .push(AbiParam::new(type_.as_type().unwrap()));
                 }
 
                 new_ctx
                     .func
                     .signature
                     .returns
-                    .push(AbiParam::new(types::I64));
+                    .push(AbiParam::new(body_type.as_type().unwrap()));
 
                 let mut builder_context = FunctionBuilderContext::new();
 
@@ -195,10 +207,11 @@ impl Translator<'_> {
                     builder,
                     vars: HashMap::new(),
                     module: self.module,
+                    sem: self.sem,
                     var_id: 0,
                 };
 
-                translator.declare_args(args, entry_block);
+                translator.declare_args(solved_args, entry_block);
 
                 let ret = translator.translate(*body)?;
                 translator.builder.ins().return_(&[ret.require_value()?]);
@@ -215,10 +228,13 @@ impl Translator<'_> {
             Expr::Call { func, args } => {
                 let mut sig = self.module.make_signature();
 
-                for _arg in &args {
-                    sig.params.push(AbiParam::new(types::I64));
+                for arg in &args {
+                    let arg_type = self.sem.type_of(&arg)?.as_type().unwrap();
+                    sig.params.push(AbiParam::new(arg_type));
                 }
-                sig.returns.push(AbiParam::new(types::I64));
+
+                sig.returns
+                    .push(AbiParam::new(expr_type.as_type().unwrap()));
 
                 let id = match *func {
                     Expr::Local(l) => self
@@ -245,20 +261,16 @@ impl Translator<'_> {
             }
             Expr::If { cond, body, else_ } => {
                 let condition_value = self.translate(*cond)?.require_value()?;
+                // let condition_value = self.builder.ins().iconst(Type::int(8).unwrap(), 1);
 
                 if let Some(else_) = else_ {
                     let then_block = self.builder.create_block();
                     let else_block = self.builder.create_block();
                     let merge_block = self.builder.create_block();
 
-                    // If-else constructs in the toy language have a return value.
-                    // In traditional SSA form, this would produce a PHI between
-                    // the then and else bodies. Cranelift uses block parameters,
-                    // so set up a parameter in the merge block, and we'll pass
-                    // the return values to it from the branches.
-                    self.builder.append_block_param(merge_block, types::I64);
+                    self.builder
+                        .append_block_param(merge_block, expr_type.as_type().unwrap());
 
-                    // Test the if condition and conditionally branch.
                     self.builder
                         .ins()
                         .brif(condition_value, then_block, &[], else_block, &[]);
@@ -267,7 +279,6 @@ impl Translator<'_> {
                     self.builder.seal_block(then_block);
                     let then_return = self.translate(*body)?.require_value()?;
 
-                    // Jump to the merge block, passing it the block return value.
                     self.builder
                         .ins()
                         .jump(merge_block, &[BlockArg::Value(then_return)]);
@@ -276,19 +287,14 @@ impl Translator<'_> {
                     self.builder.seal_block(else_block);
                     let else_ret = self.translate(*else_)?.require_value()?;
 
-                    // Jump to the merge block, passing it the block return value.
                     self.builder
                         .ins()
                         .jump(merge_block, &[BlockArg::Value(else_ret)]);
 
-                    // Switch to the merge block for subsequent statements.
                     self.builder.switch_to_block(merge_block);
 
-                    // We've now seen all the predecessors of the merge block.
                     self.builder.seal_block(merge_block);
 
-                    // Read the value of the if-else by reading the merge block
-                    // parameter.
                     let phi = self.builder.block_params(merge_block)[0];
 
                     val(phi)
@@ -314,8 +320,7 @@ impl Translator<'_> {
                     // We've now seen all the predecessors of the merge block.
                     self.builder.seal_block(merge_block);
 
-                    let ret = self.builder.ins().iconst(types::I64, 0);
-                    val(ret)
+                    TranslationValue::Null
                 }
             }
             Expr::Null => TranslationValue::Null,

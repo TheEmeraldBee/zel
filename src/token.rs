@@ -11,7 +11,6 @@ pub enum Token {
     Ctrl(char),
     Op(String),
 
-    Const,
     Let,
     Mut,
 
@@ -37,7 +36,6 @@ impl Display for Token {
                 Self::Ctrl(ch) => format!("ctrl: `{}`", ch),
                 Self::Op(op) => format!("op: `{}`", op),
 
-                Self::Const => "const".to_string(),
                 Self::Let => "let".to_string(),
                 Self::Mut => "mut".to_string(),
 

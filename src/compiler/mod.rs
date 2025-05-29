@@ -7,7 +7,11 @@ use cranelift::{
 };
 use translator::{Translator, VarType};
 
-use crate::ast::{expr::Expr, top_level::TopLevel};
+use crate::{
+    ast::{expr::Expr, top_level::TopLevel},
+    semantic::{SemanticSolver, SemanticState},
+    types::CompType,
+};
 
 mod error;
 use error::*;
@@ -19,12 +23,14 @@ mod translator;
 enum CompVarType {
     Variable(Variable),
     CompiledFunction(FuncId),
-    Function((FuncId, Signature, Vec<String>, Expr)),
+    Function((FuncId, Signature, Vec<(String, CompType)>, Expr)),
     Empty,
 }
 
 impl CompVarType {
-    pub fn compiled_function(&mut self) -> Option<(FuncId, Signature, Vec<String>, Expr)> {
+    pub fn compiled_function(
+        &mut self,
+    ) -> Option<(FuncId, Signature, Vec<(String, CompType)>, Expr)> {
         match std::mem::replace(self, CompVarType::Empty) {
             Self::Function(a) => {
                 // This will be a compiled function, so change the var type in place
@@ -89,25 +95,38 @@ impl Compiler {
         })
     }
 
-    pub fn compile_top_level(&mut self, top_level: TopLevel) -> Result<(), CompilerError> {
+    pub fn compile_top_level(
+        &mut self,
+        top_level: TopLevel,
+        sem: &mut SemanticSolver,
+    ) -> Result<(), CompilerError> {
         let finished = top_level.finish();
         // Register indevidual functions as variables.
         for (name, expr) in finished.iter() {
+            sem.scope
+                .register(name.clone(), false, SemanticState::Unsolved(expr.clone()));
+        }
+        for (name, expr) in finished.iter() {
             match expr {
                 Expr::Func { args, body } => {
-                    for _arg in args.iter() {
+                    let CompType::Function(arg_types, ret_type) = sem.get(name)?.1 else {
+                        unreachable!("Function should be correctly typed");
+                    };
+                    let mut solved_args = vec![];
+                    for ((name, _), type_) in args.iter().zip(arg_types.iter()) {
                         self.ctx
                             .func
                             .signature
                             .params
-                            .push(AbiParam::new(types::I64));
+                            .push(AbiParam::new(type_.as_type().unwrap()));
+                        solved_args.push((name.clone(), type_.clone()))
                     }
 
                     self.ctx
                         .func
                         .signature
                         .returns
-                        .push(AbiParam::new(types::I64));
+                        .push(AbiParam::new(ret_type.as_type().unwrap()));
 
                     let id = self.module.declare_function(
                         name,
@@ -120,7 +139,7 @@ impl Compiler {
                         CompVarType::Function((
                             id,
                             self.ctx.func.signature.clone(),
-                            args.clone(),
+                            solved_args,
                             *body.clone(),
                         )),
                     );
@@ -136,7 +155,7 @@ impl Compiler {
         Ok(())
     }
 
-    pub fn compile_funcs(&mut self) -> Result<(), CompilerError> {
+    pub fn compile_funcs(&mut self, sem: &mut SemanticSolver) -> Result<(), CompilerError> {
         for name in self
             .vars
             .keys()
@@ -144,11 +163,14 @@ impl Compiler {
             .collect::<Vec<_>>()
             .into_iter()
         {
+            // Force the semantics engine to solve the function!
+            let my_type = sem.get(&name)?.1;
+            println!("{my_type}");
             let var = self.vars.get_mut(&name).unwrap();
             let Some((id, sig, args, body)) = var.compiled_function() else {
                 continue;
             };
-            self.compile_func(id, sig, args, body)?;
+            self.compile_func(id, sig, args, body, sem)?;
         }
         Ok(())
     }
@@ -158,8 +180,9 @@ impl Compiler {
         &mut self,
         id: FuncId,
         sig: Signature,
-        args: Vec<String>,
+        args: Vec<(String, CompType)>,
         body: Expr,
+        sem: &mut SemanticSolver,
     ) -> Result<(), CompilerError> {
         self.ctx.func.signature = sig;
 
@@ -183,11 +206,17 @@ impl Compiler {
         let mut translator = Translator {
             builder,
             vars,
+            sem,
             module: &mut self.module,
             var_id: self.index,
         };
 
-        translator.declare_args(args, entry_block);
+        translator.declare_args(
+            args.into_iter()
+                .map(|x| (x.0, x.1.as_type().unwrap()))
+                .collect(),
+            entry_block,
+        );
 
         let ret = translator.translate(body)?;
         translator.builder.ins().return_(&[ret.require_value()?]);
