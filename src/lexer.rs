@@ -18,7 +18,7 @@ pub struct Lexer {
 
 /// Returns whether the given char is a valid operator character
 fn op(ch: char) -> bool {
-    "*/+-=><!?".contains(ch)
+    "*/+-=><!?.".contains(ch)
 }
 
 /// Returns whether the given char is a control character
@@ -71,8 +71,6 @@ impl Lexer {
                         .unwrap(),
                 ))));
 
-                self.cur -= 1;
-
                 val
             }
 
@@ -91,6 +89,18 @@ impl Lexer {
                 }
             }
 
+            '"' => {
+                let (found, rest) = self.collect_until(|lex| lex.is('"'));
+                self.advance();
+                if !found {
+                    return Err(LexError::ExpectedFoundEof("\""));
+                }
+
+                Ok(Some(Token::Literal(Literal::String(
+                    rest.iter().skip(1).collect(),
+                ))))
+            }
+
             ch if ctrl(ch) => Ok(Some(Token::Ctrl(ch))),
 
             ch if op(ch) => {
@@ -101,8 +111,6 @@ impl Lexer {
             ch if ident(ch) => {
                 let (_found, rest) = self.collect_until(|lex| !ident(lex.get()));
                 let ident = rest.into_iter().collect::<String>();
-
-                self.cur -= 1;
 
                 Ok(Some(match ident.as_str() {
                     "true" => Token::Literal(Literal::Bool(true)),
@@ -115,6 +123,8 @@ impl Lexer {
 
                     "let" => Token::Let,
                     "mut" => Token::Mut,
+
+                    "struct" => Token::Struct,
 
                     "fn" => Token::Fn,
                     "this" => Token::This,
@@ -176,6 +186,7 @@ impl Lexer {
             }
 
             if func(self) {
+                self.cur -= 1;
                 return (true, chrs);
             }
 
@@ -232,8 +243,8 @@ mod test {
 
     #[test]
     fn test_ops() {
-        let tokens = Lexer::lex("/+-*").unwrap();
-        assert_eq!(vec![Token::Op("/+-*".to_string())], tokens)
+        let tokens = Lexer::lex("/+-*.").unwrap();
+        assert_eq!(vec![Token::Op("/+-*.".to_string())], tokens)
     }
 
     #[test]

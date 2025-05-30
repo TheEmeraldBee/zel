@@ -21,6 +21,8 @@ pub enum Token {
 
     For,
 
+    Struct,
+
     This,
     Return,
 }
@@ -44,6 +46,8 @@ impl Display for Token {
                 Self::If => "if".to_string(),
                 Self::Else => "else".to_string(),
                 Self::For => "for".to_string(),
+
+                Self::Struct => "struct".to_string(),
 
                 Self::This => "this".to_string(),
                 Self::Return => "return".to_string(),

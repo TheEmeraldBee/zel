@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::{
     ast::{expr::Expr, ops::BinaryOp},
     token::Token,
+    types::Type,
 };
 
 #[derive(Error, Clone, Debug)]
@@ -17,6 +18,7 @@ pub enum ParseError {
 pub struct Parser {
     cur: isize,
     toks: Vec<Token>,
+    ignore_sep: bool,
 }
 
 impl Parser {
@@ -24,11 +26,12 @@ impl Parser {
         let mut parser = Parser {
             cur: -1,
             toks: input,
+            ignore_sep: false,
         };
 
         let mut exprs = vec![];
 
-        while let Some(expr) = parser.expr()? {
+        while let Some(expr) = parser.next()? {
             exprs.push(expr);
         }
 
@@ -83,20 +86,26 @@ impl Parser {
         self.toks[(self.cur + 1) as usize] == *tok
     }
 
-    fn skip(&mut self, tok: &Token) -> Result<(), ParseError> {
+    fn skip(&mut self, tok: &Token, after: impl ToString) -> Result<(), ParseError> {
         self.expect_advance(tok)?;
 
         self.expect(tok)?;
 
+        self.expect_advance(after)?;
+
         Ok(())
     }
 
-    fn expr(&mut self) -> Result<Option<Expr>, ParseError> {
+    fn next(&mut self) -> Result<Option<Expr>, ParseError> {
         if !self.advance() {
             return Ok(None);
         }
 
-        Ok(Some(self.binary_op(0)?))
+        Ok(Some(self.expr()?))
+    }
+
+    fn expr(&mut self) -> Result<Expr, ParseError> {
+        self.binary_op(0)
     }
 
     fn binary_op(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
@@ -105,7 +114,6 @@ impl Parser {
         while let Some(tok) = self.peek() {
             if let Token::Op(op) = tok {
                 if let Some(op) = BinaryOp::parsed(op) {
-                    println!("{lhs}");
                     let precedence = op.precedence();
                     if precedence < min_precedence {
                         break;
@@ -113,9 +121,7 @@ impl Parser {
 
                     self.advance();
 
-                    if !self.advance() {
-                        return Err(ParseError::ExpectedFoundEof("binary op | atom".to_string()));
-                    }
+                    self.expect_advance("binary op | atom")?;
 
                     let rhs = self.binary_op(precedence)?;
 
@@ -123,6 +129,21 @@ impl Parser {
                         lhs: Box::new(lhs),
                         op,
                         rhs: Box::new(rhs),
+                    };
+                } else if op == "." {
+                    self.advance();
+                    self.expect_advance("ident")?;
+
+                    let Token::Ident(field) = self.get().clone() else {
+                        return Err(ParseError::Expected(
+                            "ident".to_string(),
+                            self.get().to_string(),
+                        ));
+                    };
+
+                    lhs = Expr::Access {
+                        val: Box::new(lhs),
+                        field,
                     };
                 } else {
                     return Err(ParseError::Expected(
@@ -144,6 +165,33 @@ impl Parser {
                     func: Box::new(lhs),
                     args,
                 };
+            } else if tok == &Token::Ctrl('[') {
+                self.advance();
+                let (_, fields) = self.list(
+                    &Token::Ctrl('['),
+                    &Token::Ctrl(']'),
+                    &Token::Ctrl(','),
+                    |p| {
+                        let Token::Ident(i) = p.get().clone() else {
+                            return Err(ParseError::Expected(
+                                "ident".to_string(),
+                                p.get().to_string(),
+                            ));
+                        };
+
+                        p.skip(&Token::Ctrl(':'), "expr")?;
+
+                        let expr = p.expr()?;
+
+                        Ok((i.clone(), expr))
+                    },
+                    "field".to_string(),
+                )?;
+
+                lhs = Expr::InitStruct {
+                    fields,
+                    struct_: Box::new(lhs),
+                };
             } else {
                 break;
             }
@@ -159,11 +207,11 @@ impl Parser {
             // This could be either a set or a local
             Token::Ident(l) => {
                 if self.then(&Token::Op("=".to_string())) {
+                    self.advance();
                     self.expect_advance("expr")?;
 
-                    let Some(body) = self.expr()? else {
-                        return Err(ParseError::ExpectedFoundEof("expr".to_string()));
-                    };
+                    let body = self.expr()?;
+
                     Expr::Set {
                         name: l.clone(),
                         body: Box::new(body),
@@ -172,6 +220,7 @@ impl Parser {
                     Expr::Local(l.clone())
                 }
             }
+
             Token::Let => {
                 self.expect_advance("ident")?;
 
@@ -188,12 +237,9 @@ impl Parser {
                     ));
                 };
 
-                self.skip(&Token::Op("=".to_string()))?;
+                self.skip(&Token::Op("=".to_string()), "expr")?;
 
                 let body = self.expr()?;
-                let Some(body) = body else {
-                    return Err(ParseError::ExpectedFoundEof("expr".to_string()));
-                };
 
                 Expr::Let {
                     mutable: mut_,
@@ -201,6 +247,7 @@ impl Parser {
                     body: Box::new(body),
                 }
             }
+
             Token::Fn => {
                 self.expect_advance("args")?;
                 let (_, args) = self.list(
@@ -208,8 +255,6 @@ impl Parser {
                     &Token::Ctrl(')'),
                     &Token::Ctrl(','),
                     |p| {
-                        p.expect_advance("ident")?;
-
                         let Token::Ident(t) = p.get().clone() else {
                             return Err(ParseError::Expected(
                                 "ident".to_string(),
@@ -217,33 +262,37 @@ impl Parser {
                             ));
                         };
 
-                        p.skip(&Token::Ctrl(':'))?;
+                        p.skip(&Token::Ctrl(':'), "type")?;
 
-                        let Some(type_) = p.expr()? else {
-                            return Err(ParseError::ExpectedFoundEof("expr".to_string()));
-                        };
+                        let type_ = p.expr()?;
 
-                        Ok(Some((t, type_)))
+                        Ok((t, type_))
                     },
                     "argument".to_string(),
                 )?;
 
                 self.expect_advance("block")?;
 
+                let mut return_type = Expr::Type(Type::Null);
+
+                if self.is(&Token::Op("->".to_string())) {
+                    self.expect_advance("expr")?;
+                    return_type = self.expr()?;
+                    self.expect_advance("block")?;
+                }
+
                 let body = self.block()?;
 
                 Expr::Func {
                     args,
                     body: Box::new(body),
+                    return_type: Box::new(return_type),
                 }
             }
+
             Token::If => {
-                let Some(cond) = self.expr()? else {
-                    return Err(ParseError::Expected(
-                        "expr".to_string(),
-                        self.get().to_string(),
-                    ));
-                };
+                self.expect_advance("cond")?;
+                let cond = self.expr()?;
 
                 self.expect_advance("block")?;
                 let body = self.block()?;
@@ -258,6 +307,8 @@ impl Parser {
                     else_ = Some(after)
                 }
 
+                self.ignore_sep = true;
+
                 Expr::If {
                     cond: Box::new(cond),
                     body: Box::new(body),
@@ -265,13 +316,53 @@ impl Parser {
                 }
             }
 
+            Token::For => {
+                self.expect_advance("cond")?;
+                let first = self.expr()?;
+
+                if self.then(&Token::Ctrl(';')) {
+                    // c-style `for` loop expected now!
+                    self.advance();
+
+                    self.expect_advance("cond")?;
+                    let cond = self.expr()?;
+
+                    self.skip(&Token::Ctrl(';'), "each")?;
+
+                    let each = self.expr()?;
+
+                    self.expect_advance("body")?;
+
+                    let body = self.block()?;
+                    self.ignore_sep = true;
+
+                    Expr::For {
+                        first: Box::new(first),
+                        cond: Box::new(cond),
+                        each: Box::new(each),
+                        body: Box::new(body),
+                    }
+                } else {
+                    // Basic while loop!
+                    self.expect_advance("body")?;
+
+                    let body = self.block()?;
+                    self.ignore_sep = true;
+
+                    Expr::While {
+                        cond: Box::new(first),
+                        body: Box::new(body),
+                    }
+                }
+            }
+
             Token::Ctrl('{') => Expr::Block {
                 body: Box::new(self.block()?),
             },
             Token::Ctrl('(') => {
-                let Some(body) = self.expr()? else {
-                    return Err(ParseError::ExpectedFoundEof("expr".to_string()));
-                };
+                self.expect_advance("expr")?;
+
+                let body = self.expr()?;
 
                 self.expect_advance(")")?;
 
@@ -285,6 +376,32 @@ impl Parser {
                 body
             }
 
+            Token::Struct => {
+                self.expect_advance("fields")?;
+                let (_, fields) = self.list(
+                    &Token::Ctrl('{'),
+                    &Token::Ctrl('}'),
+                    &Token::Ctrl(','),
+                    |p| {
+                        let Token::Ident(i) = p.get().clone() else {
+                            return Err(ParseError::Expected(
+                                "ident".to_string(),
+                                p.get().to_string(),
+                            ));
+                        };
+
+                        p.skip(&Token::Ctrl(':'), "expr")?;
+
+                        let expr = p.expr()?;
+
+                        Ok((i.clone(), expr))
+                    },
+                    "field".to_string(),
+                )?;
+
+                Expr::Struct { fields }
+            }
+
             t => todo!("{t}"),
         })
     }
@@ -293,21 +410,42 @@ impl Parser {
         &mut self,
         left: &Token,
         right: &Token,
+
         separator: &Token,
-        each: impl Fn(&mut Self) -> Result<Option<T>, ParseError>,
+        each: impl Fn(&mut Self) -> Result<T, ParseError>,
         item_msg: String,
     ) -> Result<(bool, Vec<T>), ParseError> {
+        self.ignore_sep = false;
         self.expect(left)?;
 
         let mut res = vec![];
 
         let mut any = false;
+
+        let mut just_skipped = false;
         while !self.then(right) {
             any = true;
-            let Some(expr) = each(self)? else {
-                return Err(ParseError::ExpectedFoundEof(item_msg.clone()));
-            };
+
+            if !just_skipped {
+                self.expect_advance(item_msg.to_string())?;
+            } else {
+                // We should be on-top of the token
+                if self.is(right) {
+                    break;
+                }
+            }
+            just_skipped = false;
+
+            let expr = each(self)?;
+
             res.push(expr);
+
+            if self.ignore_sep {
+                self.expect_advance(format!("{} or {}", item_msg.to_string(), separator))?;
+                just_skipped = true;
+                self.ignore_sep = false;
+                continue;
+            }
 
             self.expect_advance(separator)?;
 

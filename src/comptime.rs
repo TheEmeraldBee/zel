@@ -1,160 +1,341 @@
+use std::collections::HashMap;
+
 use thiserror::Error;
 
 use crate::{
-    ast::{expr::Expr, literal::Literal},
-    semantic::ScopeStorage,
-    types::{CompType, IntegerType},
+    ast::{expr::Expr, literal::Literal, ops::BinaryOp},
+    scope::{Scope, Variable},
+    types::{Struct, Type},
+    value::{Solver, Value},
 };
 
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ComptimeError {
-    #[error("Var `{0}` not in scope")]
-    MissingVar(String),
+    #[error("Variable `{0}` does not exist in scope")]
+    VariableMissing(String),
 
-    #[error("Attempting to mutate variable `{0}`, which is immutable")]
+    #[error("Attempted to mutate immutable variable with name `{0}`")]
     MutateImmutable(String),
 
-    #[error("expected a function")]
-    NotAFunc,
+    #[error("Expected a function, got `{0}`")]
+    NotAFunction(Expr),
 
-    #[error("Expected `{0}`, but got `{1}`")]
-    ArgCount(usize, usize),
+    #[error("Unable to execute operator `{1}` between {0} and {2}")]
+    InvalidOp(Value, BinaryOp, Value),
 
-    #[error("{0}")]
-    Custom(String),
+    #[error("Attempted to divide by zero")]
+    DivisionByZero,
+
+    #[error("Expected resulting type to be `{0}`")]
+    Expected(String),
+
+    #[error("Expected type, got `{0}`")]
+    NotAType(Value),
+
+    #[error("Expected type `{0}`, got `{1}`")]
+    TypeError(Type, Type),
+
+    #[error("Struct does not have field `{0}` with type `{1}`")]
+    NoField(String, Type),
 }
 
-pub type ComptimeScope = ScopeStorage<ComptimeValue>;
-
-impl ComptimeScope {
-    pub fn get(&self, name: &str) -> Result<(bool, ComptimeValue), ComptimeError> {
-        self.scopes
-            .iter()
-            .rev()
-            .find_map(|x| x.get(name).cloned())
-            .ok_or(ComptimeError::MissingVar(name.to_string()))
-    }
-
-    pub fn set(&mut self, name: &str, value: ComptimeValue) -> Result<(), ComptimeError> {
-        let (mutable, mut_val) = self
-            .scopes
-            .iter_mut()
-            .rev()
-            .find_map(|x| x.get_mut(name))
-            .ok_or(ComptimeError::MissingVar(name.to_string()))?;
-
-        if !*mutable {
-            return Err(ComptimeError::MutateImmutable(name.to_string()));
-        }
-
-        *mut_val = value;
-        Ok(())
-    }
-}
-
-#[derive(Clone)]
-pub enum ComptimeValue {
-    Literal(Literal),
-    Type(CompType),
-    CompFn(
-        &'static dyn Fn(&mut Comptime, Vec<ComptimeValue>) -> Result<ComptimeValue, ComptimeError>,
-    ),
-    Func(Vec<(String, CompType)>, Expr),
-    None,
-}
-
-impl ComptimeValue {
-    pub fn require_type(self) -> Result<CompType, ComptimeError> {
-        match self {
-            Self::Type(t) => Ok(t),
-            _ => Err(ComptimeError::Custom("Expected `type`".to_string())),
-        }
-    }
-}
-
-pub fn int_type(
-    _c: &mut Comptime,
-    args: Vec<ComptimeValue>,
-) -> Result<ComptimeValue, ComptimeError> {
-    if args.len() != 1 {
-        return Err(ComptimeError::ArgCount(1, args.len()));
-    }
-
-    let ComptimeValue::Literal(Literal::Num(b)) = args[0] else {
-        return Err(ComptimeError::Custom("Expected Number Literal".to_string()));
-    };
-
-    let bits: u16 = b
-        .try_into()
-        .map_err(|_| ComptimeError::Custom("Expected number within u16 range".to_string()))?;
-
-    if ![8, 16, 32, 64, 128].contains(&bits) {
-        return Err(ComptimeError::Custom(format!(
-            "Expected one of `8`, `16`, `32`, `64`, or `128`, got {}",
-            bits
-        )));
-    }
-
-    Ok(ComptimeValue::Type(CompType::Integer(IntegerType::Bits(
-        bits,
-    ))))
-}
-
+/// The goal of comptime is to make a system that can execute arbitrary code at compile time
+/// This will be the system for creating types like structs, as well as running debug code, like printing, or asserting things are true.
+#[derive(Default)]
 pub struct Comptime {
-    pub scope: ComptimeScope,
-}
-
-impl Default for Comptime {
-    fn default() -> Self {
-        let mut res = Self {
-            scope: ScopeStorage::default(),
-        };
-
-        res.scope
-            .register("int".to_string(), false, ComptimeValue::CompFn(&int_type));
-
-        res
-    }
+    global_funcs: HashMap<
+        String,
+        &'static dyn Fn(&mut Self, &mut Scope, Vec<Value>) -> Result<Value, ComptimeError>,
+    >,
 }
 
 impl Comptime {
-    pub fn exec_comptime(
+    pub fn register_func(
         &mut self,
-        expr: Expr,
-        scoped: bool,
-    ) -> Result<ComptimeValue, ComptimeError> {
-        if scoped {
-            self.scope.push_scope();
+        name: impl ToString,
+        func: &'static dyn Fn(&mut Self, &mut Scope, Vec<Value>) -> Result<Value, ComptimeError>,
+    ) {
+        self.global_funcs.insert(name.to_string(), func);
+    }
+
+    pub fn execute(
+        &mut self,
+        scope: &mut Scope,
+        expr: &Expr,
+        push_scope: bool,
+    ) -> Result<Value, ComptimeError> {
+        if push_scope {
+            scope.push_scope();
         }
-        let res = Ok(match expr {
-            Expr::Literal(l) => ComptimeValue::Literal(l),
-            Expr::Local(l) => self.scope.get(&l)?.1,
+        let res = match expr {
+            Expr::Literal(l) => Value::Literal(l.clone()),
+
+            Expr::Binary { lhs, op, rhs } => {
+                let lhs = self.execute(scope, lhs, false)?;
+                let rhs = self.execute(scope, rhs, false)?;
+
+                lhs.apply_op(op, &rhs)?
+            }
+
             Expr::Let {
+                mutable,
                 name,
                 body,
-                mutable,
             } => {
-                let body_val = self.exec_comptime(*body, false)?;
-                self.scope.register(name, mutable, body_val);
-                ComptimeValue::None
+                let body_value = self.execute(scope, body, false)?;
+                scope.register(
+                    name,
+                    Variable {
+                        mutable: *mutable,
+                        value: body_value,
+                    },
+                );
+                Value::Null
             }
-            Expr::Call { func, args } => {
+
+            Expr::Set { name, body } => {
+                let body_value = self.execute(scope, body, false)?;
+
+                scope.set(name, body_value)?;
+
+                Value::Null
+            }
+
+            Expr::Local(v) => scope.get(&v, self)?.clone().value,
+
+            Expr::Func {
+                args,
+                body,
+                return_type,
+            } => {
                 let mut solved_args = vec![];
-                for arg in args {
-                    solved_args.push(self.exec_comptime(arg, false)?);
+                for (name, expr) in args {
+                    let val = self.execute(scope, expr, true)?;
+                    let Value::Type(type_) = val else {
+                        return Err(ComptimeError::NotAType(val));
+                    };
+
+                    solved_args.push((name.to_string(), type_))
                 }
-                let func = self.exec_comptime(*func, false)?;
-                match func {
-                    ComptimeValue::CompFn(inner) => inner(self, solved_args)?,
-                    _ => return Err(ComptimeError::NotAFunc),
+
+                let ret_val = self.execute(scope, return_type, true)?;
+                let Value::Type(ret_type) = ret_val else {
+                    return Err(ComptimeError::NotAType(ret_val));
+                };
+
+                Value::Function {
+                    args: solved_args,
+                    body: *body.clone(),
+                    ret_type,
                 }
             }
-            Expr::Block { body } => self.exec_comptime(*body, true)?,
-            _ => todo!("Expr {expr} isn't implemented in comptime yet"),
-        });
-        if scoped {
-            self.scope.pop_scope();
+
+            Expr::Call { func, args } => {
+                scope.push_scope();
+
+                let executed_args = args
+                    .iter()
+                    .map(|x| self.execute(scope, x, false))
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                'custom_func: {
+                    if let Expr::Local(v) = &**func {
+                        let Some(func) = self.global_funcs.get(v) else {
+                            break 'custom_func;
+                        };
+
+                        let res = (*func)(self, scope, executed_args)?;
+
+                        if push_scope {
+                            scope.pop_scope();
+                        }
+
+                        return Ok(res);
+                    }
+                };
+
+                let Value::Function {
+                    args: func_args,
+                    mut body,
+                    ret_type,
+                } = self.execute(scope, func, false)?
+                else {
+                    return Err(ComptimeError::NotAFunction(*func.clone()));
+                };
+
+                for (arg, (name, type_)) in executed_args.into_iter().zip(func_args.iter()) {
+                    if arg.type_of() != *type_ {
+                        return Err(ComptimeError::TypeError(type_.clone(), arg.type_of()));
+                    }
+                    scope.register(
+                        name,
+                        Variable {
+                            mutable: false,
+                            value: arg,
+                        },
+                    );
+                }
+
+                let res = self.execute(scope, &mut body, false)?;
+                if res.type_of() != ret_type {
+                    return Err(ComptimeError::TypeError(res.type_of(), ret_type));
+                }
+
+                scope.pop_scope();
+
+                res
+            }
+
+            Expr::If { cond, body, else_ } => {
+                scope.push_scope();
+                let res = self.execute(scope, &cond, false)?;
+                scope.pop_scope();
+
+                let Value::Literal(Literal::Bool(cond)) = res else {
+                    return Err(ComptimeError::Expected("bool".to_string()));
+                };
+
+                let has_else = else_.is_some();
+
+                if cond {
+                    let val = self.execute(scope, body, true)?;
+                    if has_else { val } else { Value::Null }
+                } else if let Some(else_) = else_ {
+                    let val = self.execute(scope, else_, true)?;
+                    val
+                } else {
+                    Value::Null
+                }
+            }
+
+            Expr::For {
+                first,
+                cond,
+                each,
+                body,
+            } => {
+                scope.push_scope();
+                self.execute(scope, first, false)?;
+
+                loop {
+                    scope.push_scope();
+
+                    let cond_val = self.execute(scope, cond, false)?;
+                    let Value::Literal(Literal::Bool(cond_res)) = cond_val else {
+                        return Err(ComptimeError::Expected("bool".to_string()));
+                    };
+
+                    if !cond_res {
+                        scope.pop_scope();
+                        break;
+                    }
+
+                    self.execute(scope, body, false)?;
+                    self.execute(scope, each, false)?;
+
+                    scope.pop_scope();
+                }
+
+                scope.pop_scope();
+                Value::Null
+            }
+
+            Expr::While { cond, body } => {
+                loop {
+                    scope.push_scope();
+                    let cond_val = self.execute(scope, cond, false)?;
+                    let Value::Literal(Literal::Bool(cond_res)) = cond_val else {
+                        return Err(ComptimeError::Expected("bool".to_string()));
+                    };
+
+                    if !cond_res {
+                        scope.pop_scope();
+                        break;
+                    }
+
+                    self.execute(scope, body, false)?;
+                    scope.pop_scope();
+                }
+                Value::Null
+            }
+
+            Expr::Block { body } => self.execute(scope, body, true)?,
+
+            Expr::Then { first, next } => {
+                self.execute(scope, first, false)?;
+                self.execute(scope, next, false)?
+            }
+
+            Expr::Struct { fields } => {
+                let mut fixed_fields = vec![];
+
+                for (name, expr) in fields.iter() {
+                    let val = self.execute(scope, expr, true)?;
+                    let Value::Type(type_) = val else {
+                        return Err(ComptimeError::NotAType(val));
+                    };
+
+                    fixed_fields.push((name.clone(), type_));
+                }
+
+                let struct_ = Struct {
+                    fields: fixed_fields,
+                };
+
+                Value::Type(Type::Struct(struct_))
+            }
+
+            Expr::InitStruct { struct_, fields } => {
+                let mut solved_fields = vec![];
+
+                let Value::Type(Type::Struct(struct_)) = self.execute(scope, struct_, true)? else {
+                    return Err(ComptimeError::Expected("struct".to_string()));
+                };
+
+                for (name, expr) in fields.iter() {
+                    let res = self.execute(scope, expr, false)?;
+
+                    if !struct_.fields.contains(&(name.clone(), res.type_of())) {
+                        return Err(ComptimeError::NoField(name.clone(), res.type_of()));
+                    }
+
+                    solved_fields.push((name.clone(), res));
+                }
+
+                Value::Struct {
+                    type_: Type::Struct(struct_),
+                    fields: solved_fields,
+                }
+            }
+
+            Expr::Access { val, field } => {
+                let solved_val = self.execute(scope, val, false)?;
+                let Value::Struct { type_, fields } = solved_val else {
+                    return Err(ComptimeError::Expected("struct".to_string()));
+                };
+
+                fields
+                    .iter()
+                    .find(|x| x.0 == *field)
+                    .ok_or(ComptimeError::NoField(field.clone(), type_))?
+                    .1
+                    .clone()
+            }
+
+            Expr::Type(t) => Value::Type(t.clone()),
+
+            // Do nothing in the case of a null expression
+            Expr::Null => Value::Null,
+        };
+        if push_scope {
+            scope.pop_scope();
         }
-        res
+        Ok(res)
+    }
+}
+
+impl Solver for Comptime {
+    fn solve(&mut self, scope: &mut Scope, expr: &Expr) -> Result<Value, ComptimeError> {
+        self.execute(scope, expr, false)
     }
 }

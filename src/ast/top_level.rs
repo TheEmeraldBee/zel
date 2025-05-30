@@ -26,17 +26,7 @@ impl TopLevel {
                 name,
                 body,
                 mutable: false,
-            } => match **body {
-                Expr::Func { args: _, body: _ } => {
-                    self.exprs.push((name.clone(), *body.clone()));
-                }
-                _ => {
-                    return Err(TopLevelError::InvalidExpr(format!(
-                        "Expressions in top level can only be `const ident = fn() {{}}`, found: {:?}",
-                        expr
-                    )));
-                }
-            },
+            } => self.exprs.push((name.clone(), *body.clone())),
             Expr::Then { first, next } => {
                 self.populate(*first.clone())?;
                 self.populate(*next.clone())?;
@@ -45,7 +35,7 @@ impl TopLevel {
             Expr::Null => {}
             _ => {
                 return Err(TopLevelError::InvalidExpr(format!(
-                    "Expressions in top level can only be `let ident = fn() {{}}`, found: {:?}",
+                    "Expressions in top level can only be `let ident = <expr>`, found: {:?}",
                     expr
                 )));
             }
@@ -63,7 +53,7 @@ impl TopLevel {
 
     pub fn require_fn(&self, name: &str, req_args: Vec<&str>) -> Result<(), TopLevelError> {
         let expr = self.get(name)?;
-        if matches!(expr, Expr::Func { args, body: _ } if args.iter().map(|x| &x.0).collect::<Vec<_>>() == req_args)
+        if matches!(expr, Expr::Func { args, body: _, return_type: _ } if args.iter().map(|x| &x.0).collect::<Vec<_>>() == req_args)
         {
             Ok(())
         } else {

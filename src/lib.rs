@@ -11,19 +11,17 @@ pub mod lexer;
 /// Also contains types and typing systems
 pub mod ast;
 
-/// Handles all types in the language
-/// this includes structs, primitives,
-/// arrays, etc...
-pub mod types;
-
 /// Module contains code that translates tokens of a file into a single Expression,
 pub mod parser;
 
-/// A basic zel interpreter, that also handles functions that create types.
+/// Module contains code for both comptime and the compiler to handle scope.
+pub mod scope;
+
+/// Module contains code for definining types, as well as primitive types.
+pub mod types;
+
+/// Module contains code for both comptime and the compiler to handle values.
+pub mod value;
+
+/// Module contains code that to execute `zel` code during compile time
 pub mod comptime;
-
-/// Module contains code to handle type checking, and variable existence before it becomes a IR error
-pub mod semantic;
-
-/// Module contains systems used to translate Expressions into Cranelift IR and object code
-pub mod compiler;

@@ -1,10 +1,14 @@
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
 use anyhow::anyhow;
 use clap::Parser;
 use zel::{
-    ast::top_level::TopLevel, compiler::Compiler, comptime::Comptime, lexer::Lexer,
-    semantic::SemanticSolver,
+    ast::{expr::Expr, literal::Literal, top_level::TopLevel},
+    comptime::{Comptime, ComptimeError},
+    lexer::Lexer,
+    scope::{Scope, Variable},
+    types::Type,
+    value::Value,
 };
 
 #[derive(clap::Parser, Debug, Clone)]
@@ -17,10 +21,23 @@ struct Args {
     out: PathBuf,
 }
 
-fn main() -> anyhow::Result<()> {
-    let mut args = Args::parse();
+fn debug(
+    _comptime: &mut Comptime,
+    _scope: &mut Scope,
+    args: Vec<Value>,
+) -> Result<Value, ComptimeError> {
+    println!(
+        "{}",
+        args.iter()
+            .map(|x| x.to_string())
+            .reduce(|lhs, rhs| format!("{lhs} {rhs}"))
+            .unwrap_or_default()
+    );
+    Ok(Value::Null)
+}
 
-    let out_name = args.out.file_name().unwrap().to_str().unwrap();
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
 
     let src = fs::read_to_string(args.file)?;
 
@@ -32,7 +49,6 @@ fn main() -> anyhow::Result<()> {
     };
 
     let mut top_level = TopLevel::default();
-    let mut semantic_analyzer = SemanticSolver::new(Comptime::default());
 
     // Populate the top-level declarations with the generated ast
     top_level.populate(ast)?;
@@ -40,33 +56,56 @@ fn main() -> anyhow::Result<()> {
     // Ensure, after populating the ast with functions, that the function `main` exists
     top_level.require_fn("main", vec![])?;
 
-    let mut compiler = Compiler::new(out_name, "x86_64-linux-unknown")?;
+    let mut comptime = Comptime::default();
+    comptime.register_func("debug", &debug);
+    comptime.register_func("int", &|_, _, v| {
+        if v.len() != 1 {
+            return Err(ComptimeError::Expected("1 argument".to_string()));
+        }
 
-    compiler.compile_top_level(top_level, &mut semantic_analyzer)?;
-    compiler.compile_funcs(&mut semantic_analyzer)?;
+        let Value::Literal(Literal::Num(bits)) = v[0] else {
+            return Err(ComptimeError::Expected("number literal".to_string()));
+        };
 
-    let path = args.out.clone();
+        Ok(Value::Type(Type::Integer(bits as u8)))
+    });
+    let mut scope = Scope::default();
+    scope.register(
+        "string",
+        Variable {
+            mutable: false,
+            value: Value::Type(Type::String),
+        },
+    );
+    scope.register(
+        "bool",
+        Variable {
+            mutable: false,
+            value: Value::Type(Type::Bool),
+        },
+    );
+    scope.register(
+        "type",
+        Variable {
+            mutable: false,
+            value: Value::Type(Type::Type),
+        },
+    );
+    scope.register_top_level(top_level);
 
-    // Write out the code to a .o file.
-    args.out.set_extension("o");
-    let bin = compiler.finish();
-    let file = fs::File::create(args.out.clone()).expect("File should be successfully created");
-    bin.object
-        .write_stream(file)
-        .expect("File should be successfully written to");
+    let res = comptime.execute(
+        &mut scope,
+        &Expr::Call {
+            func: Box::new(Expr::Local("main".to_string())),
+            args: vec![],
+        },
+        false,
+    )?;
 
-    if path
-        .extension()
-        .map(|x| x.to_str() != Some("o"))
-        .unwrap_or(true)
-    {
-        println!("Linking:");
-        // The user wants us to link, so run gcc on the file.
-        Command::new("gcc")
-            .args(["-o", path.to_str().unwrap(), args.out.to_str().unwrap()])
-            .status()?;
-
-        fs::remove_file(args.out)?;
+    if let Value::Literal(Literal::Num(a)) = res {
+        if a != 0 {
+            std::process::exit(a as i32);
+        }
     }
 
     Ok(())
