@@ -4,9 +4,10 @@ use thiserror::Error;
 
 use crate::{
     ast::{expr::Expr, literal::Literal, ops::BinaryOp},
-    scope::{Scope, Variable},
+    func::FunctionScope,
+    scope::{Scope, Solver, Variable, VariableValue},
     types::{Struct, Type},
-    value::{Solver, Value},
+    value::Value,
 };
 
 #[derive(Debug, Clone, Error)]
@@ -37,6 +38,12 @@ pub enum ComptimeError {
 
     #[error("Struct does not have field `{0}` with type `{1}`")]
     NoField(String, Type),
+
+    #[error("Array expected `{0}` elements, but got `{1}`")]
+    ArrayLengthInvalid(usize, usize),
+
+    #[error("Array index invalid. Expected between `0` and `{0}`, but got `{1}`")]
+    BadIndex(usize, i64),
 }
 
 /// The goal of comptime is to make a system that can execute arbitrary code at compile time
@@ -45,7 +52,7 @@ pub enum ComptimeError {
 pub struct Comptime {
     global_funcs: HashMap<
         String,
-        &'static dyn Fn(&mut Self, &mut Scope, Vec<Value>) -> Result<Value, ComptimeError>,
+        &'static dyn Fn(&mut Self, &mut Scope<Value>, Vec<Value>) -> Result<Value, ComptimeError>,
     >,
 }
 
@@ -53,26 +60,29 @@ impl Comptime {
     pub fn register_func(
         &mut self,
         name: impl ToString,
-        func: &'static dyn Fn(&mut Self, &mut Scope, Vec<Value>) -> Result<Value, ComptimeError>,
+        func: &'static dyn Fn(
+            &mut Self,
+            &mut Scope<Value>,
+            Vec<Value>,
+        ) -> Result<Value, ComptimeError>,
     ) {
         self.global_funcs.insert(name.to_string(), func);
     }
+}
 
-    pub fn execute(
+impl Solver<Value> for Comptime {
+    fn solve(
         &mut self,
-        scope: &mut Scope,
+        scope: &mut Scope<Value>,
+        funcs: &mut FunctionScope,
         expr: &Expr,
-        push_scope: bool,
     ) -> Result<Value, ComptimeError> {
-        if push_scope {
-            scope.push_scope();
-        }
         let res = match expr {
             Expr::Literal(l) => Value::Literal(l.clone()),
 
             Expr::Binary { lhs, op, rhs } => {
-                let lhs = self.execute(scope, lhs, false)?;
-                let rhs = self.execute(scope, rhs, false)?;
+                let lhs = self.solve(scope, funcs, lhs)?;
+                let rhs = self.solve(scope, funcs, rhs)?;
 
                 lhs.apply_op(op, &rhs)?
             }
@@ -82,60 +92,54 @@ impl Comptime {
                 name,
                 body,
             } => {
-                let body_value = self.execute(scope, body, false)?;
+                let body_value = self.solve(scope, funcs, body)?;
                 scope.register(
                     name,
                     Variable {
                         mutable: *mutable,
-                        value: body_value,
+                        value: VariableValue::Initialized(body_value),
                     },
                 );
                 Value::Null
             }
 
-            Expr::Set { name, body } => {
-                let body_value = self.execute(scope, body, false)?;
+            Expr::Set { target, body } => {
+                let r_value = self.solve(scope, funcs, body)?;
 
-                scope.set(name, body_value)?;
+                let l_value_ref = self.l_solve(scope, funcs, target)?;
+
+                if l_value_ref.type_of() != r_value.type_of() {
+                    return Err(ComptimeError::TypeError(
+                        l_value_ref.type_of(),
+                        r_value.type_of(),
+                    ));
+                }
+
+                *l_value_ref = r_value.clone();
 
                 Value::Null
             }
 
-            Expr::Local(v) => scope.get(&v, self)?.clone().value,
+            Expr::Local(v) => scope.get(&v, self, funcs)?.clone().value.solved(),
 
             Expr::Func {
                 args,
                 body,
                 return_type,
-            } => {
-                let mut solved_args = vec![];
-                for (name, expr) in args {
-                    let val = self.execute(scope, expr, true)?;
-                    let Value::Type(type_) = val else {
-                        return Err(ComptimeError::NotAType(val));
-                    };
-
-                    solved_args.push((name.to_string(), type_))
-                }
-
-                let ret_val = self.execute(scope, return_type, true)?;
-                let Value::Type(ret_type) = ret_val else {
-                    return Err(ComptimeError::NotAType(ret_val));
-                };
-
-                Value::Function {
-                    args: solved_args,
-                    body: *body.clone(),
-                    ret_type,
-                }
-            }
+            } => Value::Function(funcs.register(args.clone(), *body.clone(), *return_type.clone())),
 
             Expr::Call { func, args } => {
                 scope.push_scope();
 
                 let executed_args = args
                     .iter()
-                    .map(|x| self.execute(scope, x, false))
+                    .map(|x| {
+                        let value = match self.solve(scope, funcs, x) {
+                            Ok(t) => t,
+                            Err(e) => return Err(e),
+                        };
+                        Ok(value)
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
 
                 'custom_func: {
@@ -146,49 +150,26 @@ impl Comptime {
 
                         let res = (*func)(self, scope, executed_args)?;
 
-                        if push_scope {
-                            scope.pop_scope();
-                        }
+                        scope.pop_scope();
 
                         return Ok(res);
                     }
                 };
 
-                let Value::Function {
-                    args: func_args,
-                    mut body,
-                    ret_type,
-                } = self.execute(scope, func, false)?
-                else {
+                let Value::Function(id) = self.solve(scope, funcs, func)? else {
                     return Err(ComptimeError::NotAFunction(*func.clone()));
                 };
 
-                for (arg, (name, type_)) in executed_args.into_iter().zip(func_args.iter()) {
-                    if arg.type_of() != *type_ {
-                        return Err(ComptimeError::TypeError(type_.clone(), arg.type_of()));
-                    }
-                    scope.register(
-                        name,
-                        Variable {
-                            mutable: false,
-                            value: arg,
-                        },
-                    );
-                }
-
-                let res = self.execute(scope, &mut body, false)?;
-                if res.type_of() != ret_type {
-                    return Err(ComptimeError::TypeError(res.type_of(), ret_type));
-                }
+                let ret_val = funcs.call(scope, self, id, executed_args)?;
 
                 scope.pop_scope();
 
-                res
+                ret_val
             }
 
             Expr::If { cond, body, else_ } => {
                 scope.push_scope();
-                let res = self.execute(scope, &cond, false)?;
+                let res = self.solve(scope, funcs, &cond)?;
                 scope.pop_scope();
 
                 let Value::Literal(Literal::Bool(cond)) = res else {
@@ -198,10 +179,10 @@ impl Comptime {
                 let has_else = else_.is_some();
 
                 if cond {
-                    let val = self.execute(scope, body, true)?;
+                    let val = self.solve(scope, funcs, body)?;
                     if has_else { val } else { Value::Null }
                 } else if let Some(else_) = else_ {
-                    let val = self.execute(scope, else_, true)?;
+                    let val = self.solve(scope, funcs, else_)?;
                     val
                 } else {
                     Value::Null
@@ -215,12 +196,12 @@ impl Comptime {
                 body,
             } => {
                 scope.push_scope();
-                self.execute(scope, first, false)?;
+                self.solve(scope, funcs, first)?;
 
                 loop {
                     scope.push_scope();
 
-                    let cond_val = self.execute(scope, cond, false)?;
+                    let cond_val = self.solve(scope, funcs, cond)?;
                     let Value::Literal(Literal::Bool(cond_res)) = cond_val else {
                         return Err(ComptimeError::Expected("bool".to_string()));
                     };
@@ -230,8 +211,8 @@ impl Comptime {
                         break;
                     }
 
-                    self.execute(scope, body, false)?;
-                    self.execute(scope, each, false)?;
+                    self.solve(scope, funcs, body)?;
+                    self.solve(scope, funcs, each)?;
 
                     scope.pop_scope();
                 }
@@ -243,7 +224,7 @@ impl Comptime {
             Expr::While { cond, body } => {
                 loop {
                     scope.push_scope();
-                    let cond_val = self.execute(scope, cond, false)?;
+                    let cond_val = self.solve(scope, funcs, cond)?;
                     let Value::Literal(Literal::Bool(cond_res)) = cond_val else {
                         return Err(ComptimeError::Expected("bool".to_string()));
                     };
@@ -253,27 +234,34 @@ impl Comptime {
                         break;
                     }
 
-                    self.execute(scope, body, false)?;
+                    self.solve(scope, funcs, body)?;
                     scope.pop_scope();
                 }
                 Value::Null
             }
 
-            Expr::Block { body } => self.execute(scope, body, true)?,
+            Expr::Block { body } => {
+                scope.push_scope();
+                let res = self.solve(scope, funcs, body)?;
+                scope.pop_scope();
+                res
+            }
 
             Expr::Then { first, next } => {
-                self.execute(scope, first, false)?;
-                self.execute(scope, next, false)?
+                self.solve(scope, funcs, first)?;
+                self.solve(scope, funcs, next)?
             }
 
             Expr::Struct { fields } => {
                 let mut fixed_fields = vec![];
 
                 for (name, expr) in fields.iter() {
-                    let val = self.execute(scope, expr, true)?;
+                    scope.push_scope();
+                    let val = self.solve(scope, funcs, expr)?;
                     let Value::Type(type_) = val else {
                         return Err(ComptimeError::NotAType(val));
                     };
+                    scope.pop_scope();
 
                     fixed_fields.push((name.clone(), type_));
                 }
@@ -288,12 +276,12 @@ impl Comptime {
             Expr::InitStruct { struct_, fields } => {
                 let mut solved_fields = vec![];
 
-                let Value::Type(Type::Struct(struct_)) = self.execute(scope, struct_, true)? else {
+                let Value::Type(Type::Struct(struct_)) = self.solve(scope, funcs, struct_)? else {
                     return Err(ComptimeError::Expected("struct".to_string()));
                 };
 
                 for (name, expr) in fields.iter() {
-                    let res = self.execute(scope, expr, false)?;
+                    let res = self.solve(scope, funcs, expr)?;
 
                     if !struct_.fields.contains(&(name.clone(), res.type_of())) {
                         return Err(ComptimeError::NoField(name.clone(), res.type_of()));
@@ -308,8 +296,59 @@ impl Comptime {
                 }
             }
 
+            Expr::Array { type_, values } => {
+                let mut elements = vec![];
+                let array = self.solve(scope, funcs, type_)?;
+                let Value::Type(val_type) = array else {
+                    return Err(ComptimeError::Expected("type".to_string()));
+                };
+
+                let item_type = match val_type.clone() {
+                    Type::Array(len, item_type) => {
+                        if values.len() != len {
+                            return Err(ComptimeError::ArrayLengthInvalid(len, values.len()));
+                        }
+                        item_type
+                    }
+                    Type::Slice(item_type) => item_type,
+                    _ => return Err(ComptimeError::Expected("array | slice".to_string())),
+                };
+
+                for expr in values {
+                    let value = self.solve(scope, funcs, expr)?;
+                    if value.type_of() != *item_type {
+                        return Err(ComptimeError::TypeError(*item_type, value.type_of()));
+                    }
+                    elements.push(value);
+                }
+
+                Value::Array {
+                    type_: val_type,
+                    elements,
+                }
+            }
+
+            Expr::Index { value, index } => {
+                let array = self.solve(scope, funcs, value)?;
+                let index = self.solve(scope, funcs, index)?;
+
+                let Value::Array { type_: _, elements } = array else {
+                    return Err(ComptimeError::Expected("array".to_string()));
+                };
+
+                let Value::Literal(Literal::Num(n)) = index else {
+                    return Err(ComptimeError::Expected("number".to_string()));
+                };
+
+                if n < 0 || n >= elements.len() as i64 {
+                    return Err(ComptimeError::BadIndex(elements.len() - 1, n));
+                }
+
+                elements[n as usize].clone()
+            }
+
             Expr::Access { val, field } => {
-                let solved_val = self.execute(scope, val, false)?;
+                let solved_val = self.solve(scope, funcs, val)?;
                 let Value::Struct { type_, fields } = solved_val else {
                     return Err(ComptimeError::Expected("struct".to_string()));
                 };
@@ -327,15 +366,54 @@ impl Comptime {
             // Do nothing in the case of a null expression
             Expr::Null => Value::Null,
         };
-        if push_scope {
-            scope.pop_scope();
-        }
         Ok(res)
     }
-}
 
-impl Solver for Comptime {
-    fn solve(&mut self, scope: &mut Scope, expr: &Expr) -> Result<Value, ComptimeError> {
-        self.execute(scope, expr, false)
+    fn l_solve<'a>(
+        &mut self,
+        scope: &'a mut Scope<Value>,
+        funcs: &mut FunctionScope,
+        expr: &Expr,
+    ) -> Result<&'a mut Value, ComptimeError> {
+        Ok(match expr {
+            Expr::Local(l) => {
+                let var = scope.get_mut(l, self, funcs)?;
+                if !var.mutable {
+                    return Err(ComptimeError::MutateImmutable(expr.to_string()));
+                }
+                var.value.as_solved()
+            }
+            Expr::Access { val, field } => {
+                let solved_val = self.l_solve(scope, funcs, val)?;
+                let Value::Struct { type_, fields } = solved_val else {
+                    return Err(ComptimeError::Expected("struct".to_string()));
+                };
+
+                &mut fields
+                    .iter_mut()
+                    .find(|x| x.0 == *field)
+                    .ok_or(ComptimeError::NoField(field.clone(), type_.clone()))?
+                    .1
+            }
+            Expr::Index { value, index } => {
+                let index = self.solve(scope, funcs, index)?;
+                let array = self.l_solve(scope, funcs, value)?;
+
+                let Value::Array { type_: _, elements } = array else {
+                    return Err(ComptimeError::Expected("array".to_string()));
+                };
+
+                let Value::Literal(Literal::Num(n)) = index else {
+                    return Err(ComptimeError::Expected("number".to_string()));
+                };
+
+                if n < 0 || n >= elements.len() as i64 {
+                    return Err(ComptimeError::BadIndex(elements.len() - 1, n));
+                }
+
+                elements.get_mut(n as usize).unwrap()
+            }
+            _ => return Err(ComptimeError::MutateImmutable(expr.to_string())),
+        })
     }
 }

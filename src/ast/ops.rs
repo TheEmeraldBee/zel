@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash)]
 pub enum BinaryOp {
     Add,
     Sub,

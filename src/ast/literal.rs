@@ -1,12 +1,14 @@
 use std::fmt::{Debug, Display};
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Hash)]
 pub enum Literal {
     /// A comptime number, can be cast to any number type based on usage
     Num(i64),
 
+    /// A condition, can be true or false
     Bool(bool),
 
+    /// Represents a string slice, aka a static length string
     String(String),
 }
 
@@ -24,7 +26,7 @@ impl Display for Literal {
             match self {
                 Self::Num(n) => n.to_string(),
                 Self::Bool(b) => b.to_string(),
-                Self::String(s) => s.to_string(),
+                Self::String(s) => format!("{s}"),
             }
         )
     }

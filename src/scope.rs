@@ -1,23 +1,60 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::top_level::TopLevel,
+    ast::{expr::Expr, top_level::TopLevel},
     comptime::ComptimeError,
-    value::{Solver, Value},
+    func::FunctionScope,
 };
 
+pub trait Solver<V: Clone> {
+    fn solve(
+        &mut self,
+        scope: &mut Scope<V>,
+        funcs: &mut FunctionScope,
+        expr: &Expr,
+    ) -> Result<V, ComptimeError>;
+    fn l_solve<'a>(
+        &mut self,
+        scope: &'a mut Scope<V>,
+        funcs: &mut FunctionScope,
+        expr: &Expr,
+    ) -> Result<&'a mut V, ComptimeError>;
+}
+
 #[derive(Debug, Clone)]
-pub struct Variable {
+pub enum VariableValue<V: Clone> {
+    Initialized(V),
+    Unsolved(Expr),
+}
+
+impl<V: Clone> VariableValue<V> {
+    pub fn solved(self) -> V {
+        let Self::Initialized(v) = self else {
+            panic!("Value should be initialized")
+        };
+        v
+    }
+
+    pub fn as_solved(&mut self) -> &mut V {
+        let Self::Initialized(v) = self else {
+            panic!("Value should be initialized")
+        };
+        v
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Variable<V: Clone> {
     pub mutable: bool,
 
-    pub value: Value,
+    pub value: VariableValue<V>,
 }
 
-pub struct Scope {
-    vars: Vec<HashMap<String, Variable>>,
+pub struct Scope<V: Clone> {
+    vars: Vec<HashMap<String, Variable<V>>>,
 }
 
-impl Default for Scope {
+impl<V: Clone> Default for Scope<V> {
     /// Creates a scope with one registered scope and no variables.
     fn default() -> Self {
         Self {
@@ -26,31 +63,35 @@ impl Default for Scope {
     }
 }
 
-impl Scope {
+impl<V: Clone> Scope<V> {
     pub fn register_top_level(&mut self, top_level: TopLevel) {
         for (name, expr) in top_level.finish() {
             self.register(
                 name,
                 Variable {
                     mutable: false,
-                    value: Value::Unsolved(expr),
+                    value: VariableValue::Unsolved(expr),
                 },
             );
         }
     }
 
-    pub fn cur_scope(&mut self) -> &mut HashMap<String, Variable> {
+    pub fn cur_scope(&mut self) -> &mut HashMap<String, Variable<V>> {
         self.vars
             .last_mut()
             .expect("There should always be one scope")
     }
 
     /// Register a variable in the current scope
-    pub fn register(&mut self, name: impl ToString, value: Variable) {
+    pub fn register(&mut self, name: impl ToString, value: Variable<V>) {
         self.cur_scope().insert(name.to_string(), value);
     }
 
-    pub fn force_set(&mut self, name: impl AsRef<str>, value: Value) -> Result<(), ComptimeError> {
+    pub fn force_set(
+        &mut self,
+        name: impl AsRef<str>,
+        value: VariableValue<V>,
+    ) -> Result<(), ComptimeError> {
         let var = self
             .vars
             .iter_mut()
@@ -64,7 +105,11 @@ impl Scope {
         Ok(())
     }
 
-    pub fn set(&mut self, name: impl AsRef<str>, value: Value) -> Result<(), ComptimeError> {
+    pub fn set(
+        &mut self,
+        name: impl AsRef<str>,
+        value: VariableValue<V>,
+    ) -> Result<(), ComptimeError> {
         let var = self
             .vars
             .iter_mut()
@@ -72,13 +117,6 @@ impl Scope {
             .ok_or(ComptimeError::VariableMissing(name.as_ref().to_string()))?
             .get_mut(name.as_ref())
             .expect("Variable should exist");
-
-        if value.type_of() != var.value.type_of() {
-            return Err(ComptimeError::TypeError(
-                var.value.type_of(),
-                value.type_of(),
-            ));
-        }
 
         if !var.mutable {
             return Err(ComptimeError::MutateImmutable(name.as_ref().to_string()));
@@ -95,8 +133,9 @@ impl Scope {
     pub fn get(
         &mut self,
         name: impl AsRef<str>,
-        solver: &mut impl Solver,
-    ) -> Result<Variable, ComptimeError> {
+        solver: &mut impl Solver<V>,
+        funcs: &mut FunctionScope,
+    ) -> Result<Variable<V>, ComptimeError> {
         let val = self
             .vars
             .iter()
@@ -107,15 +146,44 @@ impl Scope {
 
         let cloned = val.clone();
 
-        if let Value::Unsolved(expr) = cloned.value {
-            let new_val = solver.solve(self, &expr)?;
-            self.force_set(name, new_val.clone())?;
+        if let VariableValue::Unsolved(expr) = cloned.value {
+            let new_val = solver.solve(self, funcs, &expr)?;
+            self.force_set(name, VariableValue::Initialized(new_val.clone()))?;
             Ok(Variable {
                 mutable: cloned.mutable,
-                value: new_val,
+                value: VariableValue::Initialized(new_val),
             })
         } else {
             Ok(cloned)
+        }
+    }
+
+    pub fn get_mut(
+        &mut self,
+        name: impl AsRef<str>,
+        solver: &mut impl Solver<V>,
+        funcs: &mut FunctionScope,
+    ) -> Result<&mut Variable<V>, ComptimeError> {
+        let val = self
+            .vars
+            .iter()
+            .rfind(|x| x.contains_key(name.as_ref()))
+            .ok_or(ComptimeError::VariableMissing(name.as_ref().to_string()))?
+            .get(name.as_ref())
+            .expect("Variable should exist");
+
+        if let VariableValue::Unsolved(expr) = val.value.clone() {
+            let new_val = solver.solve(self, funcs, &expr)?;
+            self.force_set(name.as_ref(), VariableValue::Initialized(new_val.clone()))?;
+            self.get_mut(name, solver, funcs)
+        } else {
+            Ok(self
+                .vars
+                .iter_mut()
+                .rfind(|x| x.contains_key(name.as_ref()))
+                .ok_or(ComptimeError::VariableMissing(name.as_ref().to_string()))?
+                .get_mut(name.as_ref())
+                .expect("Variable should exist"))
         }
     }
 

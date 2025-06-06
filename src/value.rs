@@ -1,24 +1,23 @@
 use std::fmt::Display;
 
 use crate::{
-    ast::{expr::Expr, literal::Literal, ops::BinaryOp},
+    ast::{literal::Literal, ops::BinaryOp},
     comptime::ComptimeError,
-    scope::Scope,
+    func::FuncId,
     types::Type,
 };
 
 #[derive(Debug, Clone)]
 pub enum Value {
-    Unsolved(Expr),
     Literal(Literal),
-    Function {
-        args: Vec<(String, Type)>,
-        body: Expr,
-        ret_type: Type,
-    },
+    Function(FuncId),
     Struct {
         type_: Type,
         fields: Vec<(String, Value)>,
+    },
+    Array {
+        type_: Type,
+        elements: Vec<Self>,
     },
     Type(Type),
     Null,
@@ -32,18 +31,11 @@ impl Value {
                 Literal::Bool(_) => Type::Bool,
                 Literal::String(_) => Type::String,
             },
-            Self::Function {
-                args,
-                body: _,
-                ret_type,
-            } => Type::Func(
-                args.iter().map(|x| x.1.clone()).collect(),
-                Box::new(ret_type.clone()),
-            ),
+            Self::Function(_) => return Type::Func,
+            Self::Array { type_, .. } => type_.clone(),
             Self::Struct { type_, fields: _ } => type_.clone(),
             Self::Type(_) => Type::Type,
             Self::Null => Type::Null,
-            Self::Unsolved(_) => unreachable!(),
         }
     }
 
@@ -122,29 +114,28 @@ impl Value {
     }
 }
 
-pub trait Solver {
-    fn solve(&mut self, scope: &mut Scope, expr: &Expr) -> Result<Value, ComptimeError>;
-}
-
 impl Display for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "{}",
             match self {
-                Self::Unsolved(expr) => expr.to_string(),
                 Self::Literal(l) => l.to_string(),
-                Self::Function {
-                    args,
-                    body,
-                    ret_type,
-                } => format!("func_{args:?}->{ret_type}=>{body}"),
+                Self::Function(id) => format!("func_{id}"),
                 Self::Struct { type_, fields } => format!(
                     "({})[{}]",
                     type_,
                     fields
                         .iter()
                         .map(|x| format!("{}: {}", x.0, x.1))
+                        .reduce(|l, r| format!("{l}, {r}"))
+                        .unwrap_or_default()
+                ),
+                Self::Array { type_, elements } => format!(
+                    "{type_}[{}]",
+                    elements
+                        .iter()
+                        .map(|x| x.to_string())
                         .reduce(|l, r| format!("{l}, {r}"))
                         .unwrap_or_default()
                 ),

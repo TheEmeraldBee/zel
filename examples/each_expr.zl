@@ -4,13 +4,19 @@ This is a basic block comment that should be completely ignored
 
 // This is a line comment that should also be ignored
 
-let int64 = int(64)
+// Alias a 64 bit int to be easier to type
+let i64 = int(64)
 
-let double = fn(a: int64) -> int64 {
-  a * 2
+let test = fn(item: type, items: slice(item)) -> item {
+  for let mut i = 0; i < len(items); i = i + 1 {
+    debug(i + 1, ":", items[i]);
+  }
+  let str_input = input("Pick one of the items from the above list! (by typing the index)");
+  let value = to_int(str_input);
+  items[value - 1]
 }
 
 let main = fn() {
-  let my_val = struct {a: string, b: int(64) } [ a: "hello, world", b: 20 ];
-  debug(my_val.a)
+  debug(test(string, slice(string)["A", "B", "C", "D", "E"]));
+  debug(test(i64, slice(i64)[1, 2, 3]));
 }

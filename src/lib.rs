@@ -23,5 +23,8 @@ pub mod types;
 /// Module contains code for both comptime and the compiler to handle values.
 pub mod value;
 
+/// Module contains code for handling many instances of function types.
+pub mod func;
+
 /// Module contains code that to execute `zel` code during compile time
 pub mod comptime;

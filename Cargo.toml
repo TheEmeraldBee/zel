@@ -14,5 +14,5 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.97"
 clap = { version = "4.5.31", features = ["derive"] }
-cranelift = { version = "0.120.0", features = ["module", "object"] }
+inkwell = { version = "0.6.0", features = ["llvm18-1"] }
 thiserror = "2.0.12"

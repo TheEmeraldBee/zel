@@ -25,7 +25,7 @@ pub enum Expr {
 
     /// Setting of a variable
     Set {
-        name: String,
+        target: Box<Self>,
         body: Box<Self>,
     },
 
@@ -71,6 +71,16 @@ pub enum Expr {
     InitStruct {
         struct_: Box<Self>,
         fields: Vec<(String, Self)>,
+    },
+
+    Array {
+        type_: Box<Self>,
+        values: Vec<Self>,
+    },
+
+    Index {
+        value: Box<Self>,
+        index: Box<Self>,
     },
 
     Access {
@@ -124,7 +134,7 @@ impl Display for Expr {
                         false => "",
                     }
                 ),
-                Expr::Set { name, body } => format!("{name}={body}"),
+                Expr::Set { target, body } => format!("{target}={body}"),
                 Expr::Local(v) => format!("var_{v}"),
                 Expr::Func {
                     args,
@@ -158,6 +168,15 @@ impl Display for Expr {
                         .reduce(|l, r| format!("{l}, {r}"))
                         .unwrap_or_default(),
                 ),
+                Expr::Array { type_, values } => format!(
+                    "{type_}[{}]",
+                    values
+                        .iter()
+                        .map(|x| x.to_string())
+                        .reduce(|l, r| format!("{l}, {r}"))
+                        .unwrap_or_default()
+                ),
+                Expr::Index { value, index } => format!("{value}[{index}]"),
                 Expr::Access { val, field } => format!("{val}.{field}"),
             }
         )

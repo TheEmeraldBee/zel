@@ -105,7 +105,76 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr, ParseError> {
-        self.binary_op(0)
+        Ok(match self.get() {
+            Token::If => {
+                self.expect_advance("cond")?;
+                let cond = self.expr()?;
+
+                self.expect_advance("block")?;
+                let body = self.block()?;
+
+                let mut else_ = None;
+
+                if self.then(&Token::Else) {
+                    self.advance();
+                    self.expect_advance("if | block")?;
+                    if self.is(&Token::If) {
+                        else_ = Some(self.expr()?);
+                    } else {
+                        else_ = Some(self.block()?);
+                    }
+                }
+
+                self.ignore_sep = true;
+
+                Expr::If {
+                    cond: Box::new(cond),
+                    body: Box::new(body),
+                    else_: else_.map(Box::new),
+                }
+            }
+
+            Token::For => {
+                self.expect_advance("cond")?;
+                let first = self.expr()?;
+
+                if self.then(&Token::Ctrl(';')) {
+                    // c-style `for` loop expected now!
+                    self.advance();
+
+                    self.expect_advance("cond")?;
+                    let cond = self.expr()?;
+
+                    self.skip(&Token::Ctrl(';'), "each")?;
+
+                    let each = self.expr()?;
+
+                    self.expect_advance("body")?;
+
+                    let body = self.block()?;
+                    self.ignore_sep = true;
+
+                    Expr::For {
+                        first: Box::new(first),
+                        cond: Box::new(cond),
+                        each: Box::new(each),
+                        body: Box::new(body),
+                    }
+                } else {
+                    // Basic while loop!
+                    self.expect_advance("body")?;
+
+                    let body = self.block()?;
+                    self.ignore_sep = true;
+
+                    Expr::While {
+                        cond: Box::new(first),
+                        body: Box::new(body),
+                    }
+                }
+            }
+            _ => self.binary_op(0)?,
+        })
     }
 
     fn binary_op(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
@@ -113,6 +182,40 @@ impl Parser {
 
         while let Some(tok) = self.peek() {
             if let Token::Op(op) = tok {
+                if op == "=" {
+                    // Assignment has the lowest precedence (e.g., 0) and is right-associative
+                    if min_precedence > 0 {
+                        break;
+                    }
+
+                    // Check if the LHS is a valid assignment target (l-value)
+                    match lhs {
+                        Expr::Local(_) | Expr::Index { .. } | Expr::Access { .. } => {
+                            // This is a valid target
+                        }
+                        _ => {
+                            // You can't assign to a literal like `5 = x`
+                            return Err(ParseError::Expected(
+                                "assignable expression (variable, index, or access)".to_string(),
+                                format!("{:?}", lhs),
+                            ));
+                        }
+                    }
+
+                    self.advance(); // consume '='
+                    self.expect_advance("expression for assignment")?;
+
+                    // Parse the right-hand side recursively
+                    let rhs = self.binary_op(0)?; // 0 for right-associativity
+
+                    // Create a single `Set` expression
+                    lhs = Expr::Set {
+                        target: Box::new(lhs),
+                        body: Box::new(rhs),
+                    };
+
+                    continue; // Continue parsing after the assignment
+                }
                 if let Some(op) = BinaryOp::parsed(op) {
                     let precedence = op.precedence();
                     if precedence < min_precedence {
@@ -167,31 +270,63 @@ impl Parser {
                 };
             } else if tok == &Token::Ctrl('[') {
                 self.advance();
-                let (_, fields) = self.list(
-                    &Token::Ctrl('['),
-                    &Token::Ctrl(']'),
-                    &Token::Ctrl(','),
-                    |p| {
-                        let Token::Ident(i) = p.get().clone() else {
-                            return Err(ParseError::Expected(
-                                "ident".to_string(),
-                                p.get().to_string(),
-                            ));
+
+                // Peek 2 elements ahead
+                self.advance();
+                let next = self.peek().cloned();
+
+                // Go back to the beginning
+                self.cur -= 1;
+
+                if next == Some(Token::Ctrl(':')) {
+                    // Field initializer! it must be a struct
+                    let (_, fields) = self.list(
+                        &Token::Ctrl('['),
+                        &Token::Ctrl(']'),
+                        &Token::Ctrl(','),
+                        |p| {
+                            let Token::Ident(i) = p.get().clone() else {
+                                return Err(ParseError::Expected(
+                                    "ident".to_string(),
+                                    p.get().to_string(),
+                                ));
+                            };
+
+                            p.skip(&Token::Ctrl(':'), "expr")?;
+
+                            let expr = p.expr()?;
+
+                            Ok((i.clone(), expr))
+                        },
+                        "field".to_string(),
+                    )?;
+
+                    lhs = Expr::InitStruct {
+                        fields,
+                        struct_: Box::new(lhs),
+                    };
+                } else {
+                    // It doesn't have a field separator, so it has to be an array.
+                    let (trailing, fields) = self.list(
+                        &Token::Ctrl('['),
+                        &Token::Ctrl(']'),
+                        &Token::Ctrl(','),
+                        Self::expr,
+                        "field".to_string(),
+                    )?;
+
+                    if fields.len() == 1 && !trailing {
+                        lhs = Expr::Index {
+                            value: Box::new(lhs),
+                            index: Box::new(fields[0].clone()),
+                        }
+                    } else {
+                        lhs = Expr::Array {
+                            type_: Box::new(lhs),
+                            values: fields,
                         };
-
-                        p.skip(&Token::Ctrl(':'), "expr")?;
-
-                        let expr = p.expr()?;
-
-                        Ok((i.clone(), expr))
-                    },
-                    "field".to_string(),
-                )?;
-
-                lhs = Expr::InitStruct {
-                    fields,
-                    struct_: Box::new(lhs),
-                };
+                    }
+                }
             } else {
                 break;
             }
@@ -205,21 +340,7 @@ impl Parser {
             Token::Literal(l) => Expr::Literal(l.clone()),
 
             // This could be either a set or a local
-            Token::Ident(l) => {
-                if self.then(&Token::Op("=".to_string())) {
-                    self.advance();
-                    self.expect_advance("expr")?;
-
-                    let body = self.expr()?;
-
-                    Expr::Set {
-                        name: l.clone(),
-                        body: Box::new(body),
-                    }
-                } else {
-                    Expr::Local(l.clone())
-                }
-            }
+            Token::Ident(l) => Expr::Local(l.clone()),
 
             Token::Let => {
                 self.expect_advance("ident")?;
@@ -287,72 +408,6 @@ impl Parser {
                     args,
                     body: Box::new(body),
                     return_type: Box::new(return_type),
-                }
-            }
-
-            Token::If => {
-                self.expect_advance("cond")?;
-                let cond = self.expr()?;
-
-                self.expect_advance("block")?;
-                let body = self.block()?;
-
-                let mut else_ = None;
-
-                if self.then(&Token::Else) {
-                    self.advance();
-                    self.expect_advance("block")?;
-                    let after = self.block()?;
-
-                    else_ = Some(after)
-                }
-
-                self.ignore_sep = true;
-
-                Expr::If {
-                    cond: Box::new(cond),
-                    body: Box::new(body),
-                    else_: else_.map(Box::new),
-                }
-            }
-
-            Token::For => {
-                self.expect_advance("cond")?;
-                let first = self.expr()?;
-
-                if self.then(&Token::Ctrl(';')) {
-                    // c-style `for` loop expected now!
-                    self.advance();
-
-                    self.expect_advance("cond")?;
-                    let cond = self.expr()?;
-
-                    self.skip(&Token::Ctrl(';'), "each")?;
-
-                    let each = self.expr()?;
-
-                    self.expect_advance("body")?;
-
-                    let body = self.block()?;
-                    self.ignore_sep = true;
-
-                    Expr::For {
-                        first: Box::new(first),
-                        cond: Box::new(cond),
-                        each: Box::new(each),
-                        body: Box::new(body),
-                    }
-                } else {
-                    // Basic while loop!
-                    self.expect_advance("body")?;
-
-                    let body = self.block()?;
-                    self.ignore_sep = true;
-
-                    Expr::While {
-                        cond: Box::new(first),
-                        body: Box::new(body),
-                    }
                 }
             }
 
