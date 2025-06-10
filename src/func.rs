@@ -1,3 +1,5 @@
+// src/func.rs
+
 use crate::{
     ast::expr::Expr,
     comptime::ComptimeError,
@@ -24,6 +26,12 @@ impl FunctionScope {
         self.funcs.push(Func { args, ret, body });
         return self.funcs.len() - 1;
     }
+
+    // Expose the AST for the monomorphizer
+    pub fn get_ast(&self, id: FuncId) -> Option<(&Vec<(String, Expr)>, &Expr, &Expr)> {
+        self.funcs.get(id).map(|f| (&f.args, &f.body, &f.ret))
+    }
+
     pub fn call(
         &mut self,
         scope: &mut Scope<Value>,

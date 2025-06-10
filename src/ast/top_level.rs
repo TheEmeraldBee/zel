@@ -14,7 +14,7 @@ pub enum TopLevelError {
     RequiredFn(String),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Debug)]
 pub struct TopLevel {
     exprs: Vec<(String, Expr)>,
 }
@@ -26,16 +26,17 @@ impl TopLevel {
                 name,
                 body,
                 mutable: false,
+                ..
             } => self.exprs.push((name.clone(), *body.clone())),
+            Expr::Extern { name, .. } => self.exprs.push((name.clone(), expr.clone())),
             Expr::Then { first, next } => {
                 self.populate(*first.clone())?;
                 self.populate(*next.clone())?;
             }
-            // Ignore null expressions
             Expr::Null => {}
             _ => {
                 return Err(TopLevelError::InvalidExpr(format!(
-                    "Expressions in top level can only be `let ident = <expr>`, found: {:?}",
+                    "Expressions in top level can only be `let ident = <expr>` or `extern fn ...`, found: {:?}",
                     expr
                 )));
             }
@@ -53,12 +54,16 @@ impl TopLevel {
 
     pub fn require_fn(&self, name: &str, req_args: Vec<&str>) -> Result<(), TopLevelError> {
         let expr = self.get(name)?;
-        if matches!(expr, Expr::Func { args, body: _, return_type: _ } if args.iter().map(|x| &x.0).collect::<Vec<_>>() == req_args)
+        if matches!(expr, Expr::Func { args, .. } if args.iter().map(|x| &x.0).collect::<Vec<_>>() == req_args)
         {
             Ok(())
         } else {
             Err(TopLevelError::RequiredFn(name.to_string()))
         }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, (String, Expr)> {
+        self.exprs.iter()
     }
 
     pub fn finish(self) -> Vec<(String, Expr)> {

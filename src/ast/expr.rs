@@ -6,39 +6,41 @@ use super::{literal::Literal, ops::BinaryOp};
 
 #[derive(Debug, Clone, Default)]
 pub enum Expr {
-    /// A literal value, something consistent throughout the language
     Literal(Literal),
 
-    /// A lhs - rhs expression
     Binary {
         lhs: Box<Self>,
         op: BinaryOp,
         rhs: Box<Self>,
     },
 
-    /// Creation of a variable
+    Deref(Box<Self>),
+
+    AddressOf(Box<Self>),
+
     Let {
         mutable: bool,
         name: String,
+        type_annotation: Option<Box<Self>>,
         body: Box<Self>,
     },
 
-    /// Setting of a variable
     Set {
         target: Box<Self>,
         body: Box<Self>,
     },
 
-    /// A local variable identifier
     Local(String),
 
-    /// A definition of a function
     Func {
-        /// args are an array of idents and types
-        /// types in `zel` are comptime executable exprs,
-        /// which to the AST are just exprs!
         args: Vec<(String, Self)>,
         body: Box<Self>,
+        return_type: Box<Self>,
+    },
+
+    Extern {
+        name: String,
+        args: Vec<(String, Self)>,
         return_type: Box<Self>,
     },
 
@@ -48,8 +50,6 @@ pub enum Expr {
         else_: Option<Box<Self>>,
     },
 
-    /// This is a c-style for loop
-    /// for let mut i = 0; i < 500; i = i + 1 {}
     For {
         first: Box<Self>,
         cond: Box<Self>,
@@ -57,8 +57,6 @@ pub enum Expr {
         body: Box<Self>,
     },
 
-    /// This is a while loop
-    /// for i < 500 {}
     While {
         cond: Box<Self>,
         body: Box<Self>,
@@ -73,7 +71,16 @@ pub enum Expr {
         fields: Vec<(String, Self)>,
     },
 
-    Array {
+    ArrayLiteral {
+        values: Vec<Self>,
+    },
+
+    ArrayFill {
+        value: Box<Self>,
+        size: Box<Self>,
+    },
+
+    ArrayInit {
         type_: Box<Self>,
         values: Vec<Self>,
     },
@@ -88,30 +95,23 @@ pub enum Expr {
         field: String,
     },
 
-    /// A statically defined type, this is used for implicit return types when not defining one.
     Type(Type),
 
-    /// The calling of a function first is the function to call
-    /// Second is the args to pass to the call
     Call {
         func: Box<Self>,
         args: Vec<Self>,
     },
 
-    /// A Differentiation of a block to help show separation when doing semantic analysis
     Block {
         body: Box<Self>,
     },
 
-    /// The most basic of operations, simply means to run the first, then return result of second.
-    /// This allows for all functions to be continued in single expression
     Then {
         first: Box<Self>,
         next: Box<Self>,
     },
 
     #[default]
-    /// A basic expression meaning that this expression is a dummy and means nothing!
     Null,
 }
 
@@ -123,15 +123,20 @@ impl Display for Expr {
             match self {
                 Expr::Literal(l) => l.to_string(),
                 Expr::Binary { lhs, op, rhs } => format!("({lhs}{op}{rhs})"),
+                Expr::Deref(expr) => format!("(*{expr})"),
+                Expr::AddressOf(expr) => format!("(&{expr})"),
                 Expr::Let {
                     mutable,
                     name,
+                    type_annotation,
                     body,
                 } => format!(
-                    "let_{}{name}={body}",
-                    match mutable {
-                        true => "mut_",
-                        false => "",
+                    "let {}{}{name}={body}",
+                    if *mutable { "mut " } else { "" },
+                    if let Some(t) = type_annotation {
+                        format!(": {} ", t)
+                    } else {
+                        "".to_string()
                     }
                 ),
                 Expr::Set { target, body } => format!("{target}={body}"),
@@ -141,6 +146,11 @@ impl Display for Expr {
                     body,
                     return_type,
                 } => format!("func({args:?}{body}->{return_type})"),
+                Expr::Extern {
+                    name,
+                    args,
+                    return_type,
+                } => format!("extern_{name}({args:?}->{return_type})",),
                 Expr::If { cond, body, else_ } => format!("if({cond})=>{body}|{else_:?}"),
                 Expr::Call { func, args } => format!("call_{func}{args:?}"),
                 Expr::Block { body } => format!("{{{body}}}"),
@@ -168,7 +178,16 @@ impl Display for Expr {
                         .reduce(|l, r| format!("{l}, {r}"))
                         .unwrap_or_default(),
                 ),
-                Expr::Array { type_, values } => format!(
+                Expr::ArrayLiteral { values } => format!(
+                    "[{}]",
+                    values
+                        .iter()
+                        .map(|x| x.to_string())
+                        .reduce(|l, r| format!("{l}, {r}"))
+                        .unwrap_or_default()
+                ),
+                Expr::ArrayFill { value, size } => format!("[{}; {}]", value, size),
+                Expr::ArrayInit { type_, values } => format!(
                     "{type_}[{}]",
                     values
                         .iter()

@@ -1,3 +1,5 @@
+// src/value.rs
+
 use std::fmt::Display;
 
 use crate::{
@@ -29,7 +31,7 @@ impl Value {
             Self::Literal(l) => match l {
                 Literal::Num(_) => Type::Integer(64),
                 Literal::Bool(_) => Type::Bool,
-                Literal::String(_) => Type::String,
+                Literal::String(_) => Type::Pointer(Box::new(Type::Integer(8))),
             },
             Self::Function(_) => return Type::Func,
             Self::Array { type_, .. } => type_.clone(),
@@ -60,21 +62,6 @@ impl Value {
                             BinaryOp::Lte => Value::Literal(Literal::Bool(l <= r)),
                             BinaryOp::Gt => Value::Literal(Literal::Bool(l > r)),
                             BinaryOp::Gte => Value::Literal(Literal::Bool(l >= r)),
-                        };
-                        Ok(result)
-                    }
-                    (Literal::String(a), Literal::String(b)) => {
-                        let result = match op {
-                            BinaryOp::Add => Value::Literal(Literal::String(format!("{a}{b}"))),
-                            BinaryOp::Eq => Value::Literal(Literal::Bool(a == b)),
-                            BinaryOp::Ne => Value::Literal(Literal::Bool(a != b)),
-                            _ => {
-                                return Err(ComptimeError::InvalidOp(
-                                    self.clone(),
-                                    op.clone(),
-                                    rhs.clone(),
-                                ));
-                            }
                         };
                         Ok(result)
                     }

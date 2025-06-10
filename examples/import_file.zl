@@ -1,0 +1,11 @@
+let vec = mod {
+  let my_type = struct {
+    a: i64,
+    b: i32,
+  }
+}
+
+let main = fn() -> i64 {
+  let my_val = vec.my_type[a: 12, b: 1];
+  0
+}

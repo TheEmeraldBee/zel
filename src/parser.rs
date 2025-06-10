@@ -1,3 +1,5 @@
+// src/parser.rs
+
 use thiserror::Error;
 
 use crate::{
@@ -18,7 +20,6 @@ pub enum ParseError {
 pub struct Parser {
     cur: isize,
     toks: Vec<Token>,
-    ignore_sep: bool,
 }
 
 impl Parser {
@@ -26,7 +27,6 @@ impl Parser {
         let mut parser = Parser {
             cur: -1,
             toks: input,
-            ignore_sep: false,
         };
 
         let mut exprs = vec![];
@@ -106,6 +106,40 @@ impl Parser {
 
     fn expr(&mut self) -> Result<Expr, ParseError> {
         Ok(match self.get() {
+            Token::Let => {
+                self.expect_advance("mut or ident")?;
+
+                let mut_ = self.is(&Token::Mut);
+
+                if mut_ {
+                    self.expect_advance("ident")?;
+                }
+
+                let Token::Ident(ident) = self.get().clone() else {
+                    return Err(ParseError::Expected(
+                        "ident".to_string(),
+                        format!("{}", self.get()),
+                    ));
+                };
+
+                let mut type_annotation = None;
+                if self.then(&Token::Ctrl(':')) {
+                    self.advance();
+                    self.expect_advance("type")?;
+                    type_annotation = Some(Box::new(self.type_expr()?));
+                }
+
+                self.skip(&Token::Op("=".to_string()), "expr")?;
+
+                let body = self.expr()?;
+
+                Expr::Let {
+                    mutable: mut_,
+                    name: ident,
+                    type_annotation,
+                    body: Box::new(body),
+                }
+            }
             Token::If => {
                 self.expect_advance("cond")?;
                 let cond = self.expr()?;
@@ -125,8 +159,6 @@ impl Parser {
                     }
                 }
 
-                self.ignore_sep = true;
-
                 Expr::If {
                     cond: Box::new(cond),
                     body: Box::new(body),
@@ -139,7 +171,6 @@ impl Parser {
                 let first = self.expr()?;
 
                 if self.then(&Token::Ctrl(';')) {
-                    // c-style `for` loop expected now!
                     self.advance();
 
                     self.expect_advance("cond")?;
@@ -152,7 +183,6 @@ impl Parser {
                     self.expect_advance("body")?;
 
                     let body = self.block()?;
-                    self.ignore_sep = true;
 
                     Expr::For {
                         first: Box::new(first),
@@ -161,11 +191,9 @@ impl Parser {
                         body: Box::new(body),
                     }
                 } else {
-                    // Basic while loop!
                     self.expect_advance("body")?;
 
                     let body = self.block()?;
-                    self.ignore_sep = true;
 
                     Expr::While {
                         cond: Box::new(first),
@@ -173,48 +201,140 @@ impl Parser {
                     }
                 }
             }
+            Token::Extern => {
+                self.skip(&Token::Fn, "ident")?;
+
+                let Token::Ident(ident) = self.get().clone() else {
+                    return Err(ParseError::Expected(
+                        "ident".to_string(),
+                        self.get().to_string(),
+                    ));
+                };
+
+                self.expect_advance("args")?;
+                self.expect(&Token::Ctrl('('))?;
+
+                let mut args = vec![];
+
+                while !self.then(&Token::Ctrl(')')) {
+                    self.expect_advance("argument or )")?;
+
+                    let Token::Ident(t) = self.get().clone() else {
+                        return Err(ParseError::Expected(
+                            "ident".to_string(),
+                            self.get().to_string(),
+                        ));
+                    };
+
+                    self.skip(&Token::Ctrl(':'), "type")?;
+                    let type_ = self.type_expr()?;
+                    args.push((t, type_));
+
+                    if self.then(&Token::Ctrl(',')) {
+                        self.advance();
+                    } else {
+                        self.expect_advance(")")?;
+                        break;
+                    }
+                }
+
+                if self.is(&Token::Ctrl(',')) {
+                    self.expect_advance(")")?;
+                }
+
+                self.expect(&Token::Ctrl(')'))?;
+
+                let mut return_type = Expr::Type(Type::Null);
+
+                if self.then(&Token::Op("->".to_string())) {
+                    self.advance();
+                    self.expect_advance("expr")?;
+                    return_type = self.expr()?;
+                }
+
+                Expr::Extern {
+                    name: ident,
+                    args,
+                    return_type: Box::new(return_type),
+                }
+            }
             _ => self.binary_op(0)?,
         })
     }
 
+    fn type_expr(&mut self) -> Result<Expr, ParseError> {
+        let mut lhs = self.unary()?;
+
+        loop {
+            if self.then(&Token::Ctrl('(')) {
+                self.advance();
+                let (_, args) = self.list(
+                    &Token::Ctrl('('),
+                    &Token::Ctrl(')'),
+                    &Token::Ctrl(','),
+                    Self::expr,
+                    "expr".to_string(),
+                )?;
+                lhs = Expr::Call {
+                    func: Box::new(lhs),
+                    args,
+                };
+            } else if self.then(&Token::Op(".".to_string())) {
+                self.advance();
+                self.expect_advance("ident")?;
+                let Token::Ident(field) = self.get().clone() else {
+                    return Err(ParseError::Expected(
+                        "ident".to_string(),
+                        self.get().to_string(),
+                    ));
+                };
+                lhs = Expr::Access {
+                    val: Box::new(lhs),
+                    field,
+                };
+            } else {
+                break;
+            }
+        }
+
+        Ok(lhs)
+    }
+
     fn binary_op(&mut self, min_precedence: u8) -> Result<Expr, ParseError> {
-        let mut lhs = self.atom()?;
+        let mut lhs = self.unary()?;
 
         while let Some(tok) = self.peek() {
             if let Token::Op(op) = tok {
                 if op == "=" {
-                    // Assignment has the lowest precedence (e.g., 0) and is right-associative
                     if min_precedence > 0 {
                         break;
                     }
 
-                    // Check if the LHS is a valid assignment target (l-value)
                     match lhs {
-                        Expr::Local(_) | Expr::Index { .. } | Expr::Access { .. } => {
-                            // This is a valid target
-                        }
+                        Expr::Local(_)
+                        | Expr::Index { .. }
+                        | Expr::Access { .. }
+                        | Expr::Deref(_) => {}
                         _ => {
-                            // You can't assign to a literal like `5 = x`
                             return Err(ParseError::Expected(
-                                "assignable expression (variable, index, or access)".to_string(),
+                                "assignable expression (variable, index, access, or deref)"
+                                    .to_string(),
                                 format!("{:?}", lhs),
                             ));
                         }
                     }
 
-                    self.advance(); // consume '='
+                    self.advance();
                     self.expect_advance("expression for assignment")?;
 
-                    // Parse the right-hand side recursively
-                    let rhs = self.binary_op(0)?; // 0 for right-associativity
+                    let rhs = self.binary_op(0)?;
 
-                    // Create a single `Set` expression
                     lhs = Expr::Set {
                         target: Box::new(lhs),
                         body: Box::new(rhs),
                     };
 
-                    continue; // Continue parsing after the assignment
+                    continue;
                 }
                 if let Some(op) = BinaryOp::parsed(op) {
                     let precedence = op.precedence();
@@ -271,15 +391,11 @@ impl Parser {
             } else if tok == &Token::Ctrl('[') {
                 self.advance();
 
-                // Peek 2 elements ahead
                 self.advance();
                 let next = self.peek().cloned();
-
-                // Go back to the beginning
                 self.cur -= 1;
 
                 if next == Some(Token::Ctrl(':')) {
-                    // Field initializer! it must be a struct
                     let (_, fields) = self.list(
                         &Token::Ctrl('['),
                         &Token::Ctrl(']'),
@@ -306,7 +422,6 @@ impl Parser {
                         struct_: Box::new(lhs),
                     };
                 } else {
-                    // It doesn't have a field separator, so it has to be an array.
                     let (trailing, fields) = self.list(
                         &Token::Ctrl('['),
                         &Token::Ctrl(']'),
@@ -321,7 +436,7 @@ impl Parser {
                             index: Box::new(fields[0].clone()),
                         }
                     } else {
-                        lhs = Expr::Array {
+                        lhs = Expr::ArrayInit {
                             type_: Box::new(lhs),
                             values: fields,
                         };
@@ -335,39 +450,25 @@ impl Parser {
         Ok(lhs)
     }
 
+    fn unary(&mut self) -> Result<Expr, ParseError> {
+        if self.is(&Token::Op("&".to_string())) {
+            self.expect_advance("expression after '&'")?;
+            let expr = self.unary()?;
+            Ok(Expr::AddressOf(Box::new(expr)))
+        } else if self.is(&Token::Op("*".to_string())) {
+            self.expect_advance("expression after '*'")?;
+            let expr = self.unary()?;
+            Ok(Expr::Deref(Box::new(expr)))
+        } else {
+            self.atom()
+        }
+    }
+
     fn atom(&mut self) -> Result<Expr, ParseError> {
         Ok(match self.get().clone() {
             Token::Literal(l) => Expr::Literal(l.clone()),
 
-            // This could be either a set or a local
             Token::Ident(l) => Expr::Local(l.clone()),
-
-            Token::Let => {
-                self.expect_advance("ident")?;
-
-                let mut_ = self.is(&Token::Mut);
-
-                if mut_ {
-                    self.expect_advance("ident")?;
-                }
-
-                let Token::Ident(ident) = self.get().clone() else {
-                    return Err(ParseError::Expected(
-                        "ident".to_string(),
-                        format!("{}", self.get()),
-                    ));
-                };
-
-                self.skip(&Token::Op("=".to_string()), "expr")?;
-
-                let body = self.expr()?;
-
-                Expr::Let {
-                    mutable: mut_,
-                    name: ident,
-                    body: Box::new(body),
-                }
-            }
 
             Token::Fn => {
                 self.expect_advance("args")?;
@@ -385,14 +486,14 @@ impl Parser {
 
                         p.skip(&Token::Ctrl(':'), "type")?;
 
-                        let type_ = p.expr()?;
+                        let type_ = p.type_expr()?;
 
                         Ok((t, type_))
                     },
                     "argument".to_string(),
                 )?;
 
-                self.expect_advance("block")?;
+                self.expect_advance("block or ->")?;
 
                 let mut return_type = Expr::Type(Type::Null);
 
@@ -411,9 +512,7 @@ impl Parser {
                 }
             }
 
-            Token::Ctrl('{') => Expr::Block {
-                body: Box::new(self.block()?),
-            },
+            Token::Ctrl('{') => self.block()?,
             Token::Ctrl('(') => {
                 self.expect_advance("expr")?;
 
@@ -429,6 +528,36 @@ impl Parser {
                 }
 
                 body
+            }
+
+            Token::Ctrl('[') => {
+                self.expect_advance("array content")?;
+                let first_elem = self.expr()?;
+
+                if self.then(&Token::Ctrl(';')) {
+                    self.advance();
+                    self.expect_advance("array size")?;
+                    let size = self.expr()?;
+                    self.expect_advance("]")?;
+                    self.expect(&Token::Ctrl(']'))?;
+                    Expr::ArrayFill {
+                        value: Box::new(first_elem),
+                        size: Box::new(size),
+                    }
+                } else {
+                    let mut values = vec![first_elem];
+                    while self.then(&Token::Ctrl(',')) {
+                        self.advance();
+                        if self.then(&Token::Ctrl(']')) {
+                            break;
+                        }
+                        self.expect_advance("array element")?;
+                        values.push(self.expr()?);
+                    }
+                    self.expect_advance("]")?;
+                    self.expect(&Token::Ctrl(']'))?;
+                    Expr::ArrayLiteral { values }
+                }
             }
 
             Token::Struct => {
@@ -461,64 +590,43 @@ impl Parser {
         })
     }
 
-    fn list<T: Default>(
+    fn list<T>(
         &mut self,
         left: &Token,
         right: &Token,
-
         separator: &Token,
         each: impl Fn(&mut Self) -> Result<T, ParseError>,
         item_msg: String,
     ) -> Result<(bool, Vec<T>), ParseError> {
-        self.ignore_sep = false;
         self.expect(left)?;
 
         let mut res = vec![];
-
-        let mut any = false;
-
-        let mut just_skipped = false;
-        while !self.then(right) {
-            any = true;
-
-            if !just_skipped {
-                self.expect_advance(item_msg.to_string())?;
-            } else {
-                // We should be on-top of the token
-                if self.is(right) {
-                    break;
-                }
-            }
-            just_skipped = false;
-
-            let expr = each(self)?;
-
-            res.push(expr);
-
-            if self.ignore_sep {
-                self.expect_advance(format!("{} or {}", item_msg.to_string(), separator))?;
-                just_skipped = true;
-                self.ignore_sep = false;
-                continue;
-            }
-
-            self.expect_advance(separator)?;
-
-            if !self.is(separator) {
-                break;
-            }
-        }
-
         let mut trailing = false;
 
-        if self.is(separator) {
-            trailing = true;
+        if self.then(right) {
+            self.advance();
+            return Ok((trailing, res));
         }
 
-        if self.is(separator) || !any {
-            self.expect_advance(right)?;
+        // Parse first item
+        self.expect_advance(item_msg.to_string())?;
+        res.push(each(self)?);
+
+        // Parse subsequent items
+        while self.then(separator) {
+            self.advance(); // consume separator
+
+            if self.then(right) {
+                // trailing separator
+                trailing = true;
+                break;
+            }
+
+            self.expect_advance(item_msg.to_string())?;
+            res.push(each(self)?);
         }
 
+        self.expect_advance(right)?;
         self.expect(right)?;
 
         Ok((trailing, res))

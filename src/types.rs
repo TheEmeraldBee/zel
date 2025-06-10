@@ -1,6 +1,8 @@
+// src/types.rs
+
 use std::fmt::Display;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub struct Struct {
     pub fields: Vec<(String, Type)>,
 }
@@ -19,17 +21,16 @@ impl Display for Struct {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Hash, Eq)]
 pub enum Type {
     /// An integer with the given number of bits.
     Integer(u8),
     Bool,
-    String,
 
     Type,
 
     Array(usize, Box<Self>),
-    Slice(Box<Self>),
+    Pointer(Box<Self>),
 
     Struct(Struct),
 
@@ -46,7 +47,6 @@ impl Display for Type {
             match self {
                 Self::Integer(bits) => format!("i{bits}"),
                 Self::Bool => "bool".to_string(),
-                Self::String => "string".to_string(),
 
                 Self::Type => "type".to_string(),
 
@@ -55,7 +55,7 @@ impl Display for Type {
                 Self::Func => "func".to_string(),
 
                 Self::Array(size, element_type) => format!("[{element_type}; {size}]"),
-                Self::Slice(element_type) => format!("[{element_type}]"),
+                Self::Pointer(element_type) => format!("*{element_type}"),
 
                 Self::Null => "null".to_string(),
             }

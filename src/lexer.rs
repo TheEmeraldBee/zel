@@ -18,7 +18,7 @@ pub struct Lexer {
 
 /// Returns whether the given char is a valid operator character
 fn op(ch: char) -> bool {
-    "*/+-=><!?.".contains(ch)
+    "*/+-=><!?&.".contains(ch)
 }
 
 /// Returns whether the given char is a control character
@@ -127,6 +127,10 @@ impl Lexer {
                     "struct" => Token::Struct,
 
                     "fn" => Token::Fn,
+
+                    "const" => Token::Const,
+                    "extern" => Token::Extern,
+
                     "this" => Token::This,
                     "return" => Token::Return,
 

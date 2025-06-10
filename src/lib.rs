@@ -28,3 +28,6 @@ pub mod func;
 
 /// Module contains code that to execute `zel` code during compile time
 pub mod comptime;
+
+/// Module contains code for compiling zel code to LLVM IR
+pub mod compiler;

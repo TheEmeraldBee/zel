@@ -1,3 +1,5 @@
+// src/scope.rs
+
 use std::collections::HashMap;
 
 use crate::{
@@ -64,16 +66,26 @@ impl<V: Clone> Default for Scope<V> {
 }
 
 impl<V: Clone> Scope<V> {
-    pub fn register_top_level(&mut self, top_level: TopLevel) {
-        for (name, expr) in top_level.finish() {
+    pub fn register_top_level(&mut self, top_level: &TopLevel) {
+        for (name, expr) in top_level.iter() {
             self.register(
-                name,
+                name.clone(),
                 Variable {
                     mutable: false,
-                    value: VariableValue::Unsolved(expr),
+                    value: VariableValue::Unsolved(expr.clone()),
                 },
             );
         }
+    }
+
+    // Add this new method to get the raw, unsolved variable
+    pub fn get_raw(&self, name: impl AsRef<str>) -> Result<Variable<V>, ComptimeError> {
+        self.vars
+            .iter()
+            .rfind(|x| x.contains_key(name.as_ref()))
+            .and_then(|scope| scope.get(name.as_ref()))
+            .cloned()
+            .ok_or_else(|| ComptimeError::VariableMissing(name.as_ref().to_string()))
     }
 
     pub fn cur_scope(&mut self) -> &mut HashMap<String, Variable<V>> {
@@ -125,6 +137,18 @@ impl<V: Clone> Scope<V> {
         var.value = value;
 
         Ok(())
+    }
+
+    pub fn get_solved(&mut self, name: impl AsRef<str>) -> Result<V, ComptimeError> {
+        let val = self
+            .vars
+            .iter()
+            .rfind(|x| x.contains_key(name.as_ref()))
+            .ok_or(ComptimeError::VariableMissing(name.as_ref().to_string()))?
+            .get(name.as_ref())
+            .expect("Variable should exist");
+
+        Ok(val.value.clone().solved())
     }
 
     /// Retrieves a variable, searching in decending order of scopes

@@ -1,10 +1,14 @@
-use std::collections::HashMap;
+// src/comptime.rs
+
+use std::{collections::HashMap, fs, path::PathBuf};
 
 use thiserror::Error;
 
 use crate::{
-    ast::{expr::Expr, literal::Literal, ops::BinaryOp},
-    func::FunctionScope,
+    ast::{expr::Expr, literal::Literal, ops::BinaryOp, top_level::TopLevel},
+    func::{FuncId, FunctionScope},
+    lexer::Lexer,
+    parser::Parser,
     scope::{Scope, Solver, Variable, VariableValue},
     types::{Struct, Type},
     value::Value,
@@ -44,19 +48,30 @@ pub enum ComptimeError {
 
     #[error("Array index invalid. Expected between `0` and `{0}`, but got `{1}`")]
     BadIndex(usize, i64),
+
+    #[error("Unable to solve `{0}` at comptime")]
+    Unsolvable(Expr),
+
+    #[error("Module error: {0}")]
+    ModuleError(String),
 }
 
-/// The goal of comptime is to make a system that can execute arbitrary code at compile time
-/// This will be the system for creating types like structs, as well as running debug code, like printing, or asserting things are true.
-#[derive(Default)]
 pub struct Comptime {
     global_funcs: HashMap<
         String,
         &'static dyn Fn(&mut Self, &mut Scope<Value>, Vec<Value>) -> Result<Value, ComptimeError>,
     >,
+    pub file_stack: Vec<PathBuf>,
 }
 
 impl Comptime {
+    pub fn new(initial_path: PathBuf) -> Self {
+        Self {
+            global_funcs: HashMap::default(),
+            file_stack: vec![initial_path],
+        }
+    }
+
     pub fn register_func(
         &mut self,
         name: impl ToString,
@@ -68,6 +83,37 @@ impl Comptime {
     ) {
         self.global_funcs.insert(name.to_string(), func);
     }
+
+    pub fn is_comptime_fn(&self, name: &str) -> bool {
+        self.global_funcs.contains_key(name)
+    }
+
+    pub fn call_comptime_fn(
+        &mut self,
+        name: &str,
+        scope: &mut Scope<Value>,
+        args: Vec<Value>,
+    ) -> Result<Value, ComptimeError> {
+        let func = self.global_funcs.get(name).unwrap();
+        (*func)(self, scope, args)
+    }
+
+    pub fn get_fn_id(
+        &mut self,
+        name: &str,
+        scope: &mut Scope<Value>,
+    ) -> Result<Option<FuncId>, ComptimeError> {
+        let var = self.solve(
+            scope,
+            &mut FunctionScope::default(),
+            &Expr::Local(name.to_string()),
+        )?;
+        if let Value::Function(id) = var {
+            Ok(Some(id))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 impl Solver<Value> for Comptime {
@@ -78,6 +124,19 @@ impl Solver<Value> for Comptime {
         expr: &Expr,
     ) -> Result<Value, ComptimeError> {
         let res = match expr {
+            Expr::Extern { .. } => return Err(ComptimeError::Unsolvable(expr.clone())),
+            Expr::AddressOf(_) => return Err(ComptimeError::Unsolvable(expr.clone())),
+
+            Expr::Deref(i) => {
+                // Derefing a type is actually a pointer
+                let type_ = self.solve(scope, funcs, i)?;
+                let Value::Type(t) = type_ else {
+                    return Err(ComptimeError::NotAType(type_));
+                };
+
+                Value::Type(Type::Pointer(Box::new(t)))
+            }
+
             Expr::Literal(l) => Value::Literal(l.clone()),
 
             Expr::Binary { lhs, op, rhs } => {
@@ -90,9 +149,21 @@ impl Solver<Value> for Comptime {
             Expr::Let {
                 mutable,
                 name,
+                type_annotation,
                 body,
             } => {
                 let body_value = self.solve(scope, funcs, body)?;
+
+                if let Some(type_expr) = type_annotation {
+                    let type_val = self.solve(scope, funcs, type_expr)?;
+                    let Value::Type(t) = type_val else {
+                        return Err(ComptimeError::Expected("a type".to_string()));
+                    };
+                    if body_value.type_of() != t {
+                        return Err(ComptimeError::TypeError(t, body_value.type_of()));
+                    }
+                }
+
                 scope.register(
                     name,
                     Variable {
@@ -131,6 +202,66 @@ impl Solver<Value> for Comptime {
             Expr::Call { func, args } => {
                 scope.push_scope();
 
+                // Handle `import` as a special comptime form
+                if let Expr::Local(name) = &**func {
+                    if name == "import" {
+                        if args.len() != 1 {
+                            return Err(ComptimeError::Expected(
+                                "1 argument for import".to_string(),
+                            ));
+                        }
+                        let path_val = self.solve(scope, funcs, &args[0])?;
+                        let Value::Literal(Literal::String(relative_path)) = path_val else {
+                            return Err(ComptimeError::Expected(
+                                "a string literal for import path".to_string(),
+                            ));
+                        };
+
+                        let current_dir = self.file_stack.last().unwrap();
+                        let full_path = current_dir.join(relative_path);
+
+                        let src = fs::read_to_string(&full_path).map_err(|e| {
+                            ComptimeError::ModuleError(format!(
+                                "Could not read file {}: {}",
+                                full_path.display(),
+                                e
+                            ))
+                        })?;
+
+                        let new_dir = full_path.parent().unwrap().to_path_buf();
+                        self.file_stack.push(new_dir);
+
+                        let tokens = Lexer::lex(&src)
+                            .map_err(|e| ComptimeError::ModuleError(e.to_string()))?;
+                        let ast = Parser::parse(tokens)
+                            .map_err(|e| ComptimeError::ModuleError(e.to_string()))?;
+
+                        let mut top_level = TopLevel::default();
+                        top_level
+                            .populate(ast)
+                            .map_err(|e| ComptimeError::ModuleError(e.to_string()))?;
+
+                        let mut fields = vec![];
+                        let mut type_fields = vec![];
+
+                        for (name, expr) in top_level.iter() {
+                            let value = self.solve(scope, funcs, expr)?;
+                            type_fields.push((name.clone(), value.type_of()));
+                            fields.push((name.clone(), value));
+                        }
+
+                        self.file_stack.pop();
+
+                        let struct_type = Type::Struct(Struct {
+                            fields: type_fields,
+                        });
+                        return Ok(Value::Struct {
+                            type_: struct_type,
+                            fields,
+                        });
+                    }
+                }
+
                 let executed_args = args
                     .iter()
                     .map(|x| {
@@ -142,17 +273,13 @@ impl Solver<Value> for Comptime {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
 
-                'custom_func: {
+                {
                     if let Expr::Local(v) = &**func {
-                        let Some(func) = self.global_funcs.get(v) else {
-                            break 'custom_func;
-                        };
-
-                        let res = (*func)(self, scope, executed_args)?;
-
-                        scope.pop_scope();
-
-                        return Ok(res);
+                        if let Some(func) = self.global_funcs.get(v) {
+                            let res = (*func)(self, scope, executed_args)?;
+                            scope.pop_scope();
+                            return Ok(res);
+                        }
                     }
                 };
 
@@ -296,7 +423,36 @@ impl Solver<Value> for Comptime {
                 }
             }
 
-            Expr::Array { type_, values } => {
+            Expr::ArrayLiteral { values } => {
+                let elements: Vec<_> = values
+                    .iter()
+                    .map(|v| self.solve(scope, funcs, v))
+                    .collect::<Result<_, _>>()?;
+                let elem_type = elements[0].type_of();
+                let array_type = Type::Array(elements.len(), Box::new(elem_type));
+                Value::Array {
+                    type_: array_type,
+                    elements,
+                }
+            }
+
+            Expr::ArrayFill { value, size } => {
+                let elem_val = self.solve(scope, funcs, value)?;
+                let size_val = self.solve(scope, funcs, size)?;
+                let Value::Literal(Literal::Num(n)) = size_val else {
+                    return Err(ComptimeError::Expected(
+                        "an integer for array size".to_string(),
+                    ));
+                };
+                let elements = vec![elem_val.clone(); n as usize];
+                let array_type = Type::Array(n as usize, Box::new(elem_val.type_of()));
+                Value::Array {
+                    type_: array_type,
+                    elements,
+                }
+            }
+
+            Expr::ArrayInit { type_, values } => {
                 let mut elements = vec![];
                 let array = self.solve(scope, funcs, type_)?;
                 let Value::Type(val_type) = array else {
@@ -310,8 +466,8 @@ impl Solver<Value> for Comptime {
                         }
                         item_type
                     }
-                    Type::Slice(item_type) => item_type,
-                    _ => return Err(ComptimeError::Expected("array | slice".to_string())),
+                    Type::Pointer(item_type) => item_type,
+                    _ => return Err(ComptimeError::Expected("array | pointer".to_string())),
                 };
 
                 for expr in values {
@@ -363,7 +519,6 @@ impl Solver<Value> for Comptime {
 
             Expr::Type(t) => Value::Type(t.clone()),
 
-            // Do nothing in the case of a null expression
             Expr::Null => Value::Null,
         };
         Ok(res)
@@ -413,7 +568,7 @@ impl Solver<Value> for Comptime {
 
                 elements.get_mut(n as usize).unwrap()
             }
-            _ => return Err(ComptimeError::MutateImmutable(expr.to_string())),
+            _ => return Err(ComptimeError::Unsolvable(expr.clone())),
         })
     }
 }

@@ -23,6 +23,9 @@ pub enum Token {
 
     Struct,
 
+    Const,
+    Extern,
+
     This,
     Return,
 }
@@ -48,6 +51,9 @@ impl Display for Token {
                 Self::For => "for".to_string(),
 
                 Self::Struct => "struct".to_string(),
+
+                Self::Const => "const".to_string(),
+                Self::Extern => "extern".to_string(),
 
                 Self::This => "this".to_string(),
                 Self::Return => "return".to_string(),
