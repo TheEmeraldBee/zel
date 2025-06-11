@@ -9,6 +9,9 @@ pub enum LexError {
 
     #[error("expected `{0}`, found EOF")]
     ExpectedFoundEof(&'static str),
+
+    #[error("Invalid unicode escape sequence")]
+    InvalidUnicodeEscape,
 }
 
 pub struct Lexer {
@@ -90,15 +93,60 @@ impl Lexer {
             }
 
             '"' => {
-                let (found, rest) = self.collect_until(|lex| lex.is('"'));
-                self.advance();
-                if !found {
-                    return Err(LexError::ExpectedFoundEof("\""));
+                let mut string_content_chars = Vec::new();
+                let mut escaped = false;
+
+                loop {
+                    // Check for EOF before advancing
+                    if (self.cur + 1) as usize >= self.src.len() {
+                        return Err(LexError::ExpectedFoundEof("\""));
+                    }
+
+                    // Advance to the next character
+                    self.advance();
+                    let ch = self.get();
+
+                    if escaped {
+                        match ch {
+                            'n' => string_content_chars.push('\n'),
+                            't' => string_content_chars.push('\t'),
+                            'r' => string_content_chars.push('\r'),
+                            '\\' => string_content_chars.push('\\'),
+                            '"' => string_content_chars.push('"'),
+                            '\'' => string_content_chars.push('\''),
+                            '0' => string_content_chars.push('\0'),
+                            'x' => {
+                                if (self.cur + 2) as usize >= self.src.len() {
+                                    return Err(LexError::ExpectedFoundEof("hex digits for \\x"));
+                                }
+                                let hex_str: String = self.src
+                                    [(self.cur + 1) as usize..(self.cur + 3) as usize]
+                                    .iter()
+                                    .collect();
+                                if let Ok(value) = u8::from_str_radix(&hex_str, 16) {
+                                    string_content_chars.push(value as char);
+                                    self.cur += 2;
+                                } else {
+                                    return Err(LexError::InvalidUnicodeEscape);
+                                }
+                            }
+                            _ => {
+                                string_content_chars.push('\\');
+                                string_content_chars.push(ch);
+                            }
+                        }
+                        escaped = false;
+                    } else if ch == '\\' {
+                        escaped = true;
+                    } else if ch == '"' {
+                        break; // End of string literal
+                    } else {
+                        string_content_chars.push(ch);
+                    }
                 }
 
-                Ok(Some(Token::Literal(Literal::String(
-                    rest.iter().skip(1).collect(),
-                ))))
+                let string_value: String = string_content_chars.into_iter().collect();
+                Ok(Some(Token::Literal(Literal::String(string_value))))
             }
 
             ch if ctrl(ch) => Ok(Some(Token::Ctrl(ch))),
