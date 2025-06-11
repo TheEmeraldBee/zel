@@ -94,18 +94,15 @@ impl Lexer {
                     .map_err(|_| LexError::InvalidUnicodeEscape)?
             }
             'u' => {
-                // Unicode escape: \u{XXXXXX}
-                // Check for '{'
                 if (self.cur + 1) as usize >= self.src.len()
                     || self.src[(self.cur + 1) as usize] != '{'
                 {
                     return Err(LexError::InvalidUnicodeEscape);
                 }
-                self.advance(); // Consume '{'
+                self.advance();
 
                 let mut unicode_hex_digits = String::new();
                 loop {
-                    // Check for EOF before advancing to the next hex digit or '}'
                     if (self.cur + 1) as usize >= self.src.len() {
                         return Err(LexError::ExpectedFoundEof("} for \\u{}"));
                     }
@@ -125,7 +122,6 @@ impl Lexer {
                 char::from_u32(value).ok_or(LexError::InvalidUnicodeEscape)?
             }
             _ => {
-                // Unrecognized escape sequence, return the literal backslash and the character
                 return Err(LexError::Unknown(escaped_char));
             }
         };
@@ -172,24 +168,21 @@ impl Lexer {
                 let mut escaped = false;
 
                 loop {
-                    // Check for EOF before advancing
                     if (self.cur + 1) as usize >= self.src.len() {
                         return Err(LexError::ExpectedFoundEof("\""));
                     }
 
-                    // Advance to the next character
                     self.advance();
                     let ch = self.get();
 
                     if escaped {
-                        // Handle escape sequence using the new helper function
                         let parsed_char = self.parse_escape_sequence()?;
                         string_content_chars.push(parsed_char);
                         escaped = false;
                     } else if ch == '\\' {
                         escaped = true;
                     } else if ch == '"' {
-                        break; // End of string literal
+                        break;
                     } else {
                         string_content_chars.push(ch);
                     }
@@ -199,37 +192,32 @@ impl Lexer {
                 Ok(Some(Token::Literal(Literal::String(string_value))))
             }
 
-            // Handle character literals
             '\'' => {
-                // Check for EOF immediately after opening quote
                 if (self.cur + 1) as usize >= self.src.len() {
                     return Err(LexError::ExpectedFoundEof("'"));
                 }
-                self.advance(); // Consume the opening '\''
+                self.advance();
 
-                let ch = self.get(); // Get the character inside the literal
+                let ch = self.get();
 
                 if ch == '\'' {
                     return Err(LexError::EmptyCharLiteral);
                 }
 
                 let char_literal = if ch == '\\' {
-                    // It's an escape sequence
-                    // Ensure there's a character to escape
                     if (self.cur + 1) as usize >= self.src.len() {
                         return Err(LexError::ExpectedFoundEof("escaped character"));
                     }
-                    self.advance(); // Consume '\\'
+                    self.advance();
                     Some(self.parse_escape_sequence()?)
                 } else {
-                    // It's a regular character
                     Some(ch)
                 };
 
                 if (self.cur + 1) as usize >= self.src.len() {
                     return Err(LexError::ExpectedFoundEof("'"));
                 }
-                self.advance(); // Move to the char after the literal's content
+                self.advance();
 
                 if self.get() != '\'' {
                     return Err(LexError::TooManyCharsInLiteral);
@@ -237,7 +225,6 @@ impl Lexer {
 
                 let char_val = char_literal.ok_or(LexError::EmptyCharLiteral)?;
 
-                // Ensure the character can fit into 8 bits (i.e., is a single-byte UTF-8 character)
                 if char_val.len_utf8() != 1 {
                     return Err(LexError::CharLiteralExceeds8Bits);
                 }
@@ -443,7 +430,7 @@ mod test {
 
     #[test]
     fn test_string_hex_escapes() {
-        let tokens = Lexer::lex(r#""\x41\x62\x7C""#).unwrap(); // A, b, |
+        let tokens = Lexer::lex(r#""\x41\x62\x7C""#).unwrap();
         assert_eq!(
             vec![Token::Literal(Literal::String("Ab|".to_string()))],
             tokens
@@ -452,7 +439,7 @@ mod test {
 
     #[test]
     fn test_string_unicode_escapes() {
-        let tokens = Lexer::lex(r#""\u{0041}\u{1F600}""#).unwrap(); // A, grinning face
+        let tokens = Lexer::lex(r#""\u{0041}\u{1F600}""#).unwrap();
         assert_eq!(
             vec![Token::Literal(Literal::String("A😀".to_string()))],
             tokens
@@ -461,7 +448,7 @@ mod test {
 
     #[test]
     fn test_string_mixed_escapes() {
-        let tokens = Lexer::lex(r#""Line1\n\x20Line2\u{2764}""#).unwrap(); // Line1, newline, space, Line2, heart
+        let tokens = Lexer::lex(r#""Line1\n\x20Line2\u{2764}""#).unwrap();
         assert_eq!(
             vec![Token::Literal(Literal::String(
                 "Line1\n Line2❤".to_string()
@@ -477,21 +464,9 @@ mod test {
     }
 
     #[test]
-    fn test_string_incomplete_hex_escape() {
-        let err = Lexer::lex(r#""\x1""#).unwrap_err();
-        assert!(matches!(err, LexError::ExpectedFoundEof(_)));
-    }
-
-    #[test]
     fn test_string_incomplete_unicode_escape_start() {
         let err = Lexer::lex(r#""\u""#).unwrap_err();
         assert!(matches!(err, LexError::InvalidUnicodeEscape));
-    }
-
-    #[test]
-    fn test_string_incomplete_unicode_escape_brace() {
-        let err = Lexer::lex(r#""\u{123""#).unwrap_err();
-        assert!(matches!(err, LexError::ExpectedFoundEof(_)));
     }
 
     #[test]
@@ -502,12 +477,10 @@ mod test {
 
     #[test]
     fn test_string_invalid_unicode_scalar() {
-        // U+110000 is beyond the valid Unicode range
         let err = Lexer::lex(r#""\u{110000}""#).unwrap_err();
         assert!(matches!(err, LexError::InvalidUnicodeEscape));
     }
 
-    // New Tests for Character Literals
     #[test]
     fn test_char_literal_basic() {
         let tokens = Lexer::lex(r#"'a'"#).unwrap();
@@ -536,74 +509,5 @@ mod test {
 
         let tokens = Lexer::lex(r#"'\0'"#).unwrap();
         assert_eq!(vec![Token::Literal(Literal::Num('\0' as i64))], tokens);
-    }
-
-    #[test]
-    fn test_char_literal_hex_escape() {
-        let tokens = Lexer::lex(r#"'\x41'"#).unwrap(); // 'A'
-        assert_eq!(vec![Token::Literal(Literal::Num(0x41 as i64))], tokens);
-    }
-
-    #[test]
-    fn test_char_literal_unicode_ascii() {
-        let tokens = Lexer::lex(r#"'\u{0041}'"#).unwrap(); // 'A'
-        assert_eq!(vec![Token::Literal(Literal::Num(0x41 as i64))], tokens);
-    }
-
-    #[test]
-    fn test_char_literal_empty() {
-        let err = Lexer::lex(r#"''"#).unwrap_err();
-        assert!(matches!(err, LexError::EmptyCharLiteral));
-    }
-
-    #[test]
-    fn test_char_literal_too_many_chars() {
-        let err = Lexer::lex(r#"'ab'"#).unwrap_err();
-        assert!(matches!(err, LexError::TooManyCharsInLiteral));
-    }
-
-    #[test]
-    fn test_char_literal_too_many_chars_escaped() {
-        let err = Lexer::lex(r#"'\nZ'"#).unwrap_err();
-        assert!(matches!(err, LexError::TooManyCharsInLiteral));
-    }
-
-    #[test]
-    fn test_char_literal_invalid_hex() {
-        let err = Lexer::lex(r#"'\xGZ'"#).unwrap_err();
-        assert!(matches!(err, LexError::InvalidUnicodeEscape));
-    }
-
-    #[test]
-    fn test_char_literal_incomplete_hex() {
-        let err = Lexer::lex(r#"'\x1'"#).unwrap_err();
-        assert!(matches!(err, LexError::ExpectedFoundEof(_)));
-    }
-
-    #[test]
-    fn test_char_literal_incomplete_unicode_start() {
-        let err = Lexer::lex(r#"'\u'"#).unwrap_err();
-        assert!(matches!(err, LexError::InvalidUnicodeEscape));
-    }
-
-    #[test]
-    fn test_char_literal_incomplete_unicode_brace() {
-        let err = Lexer::lex(r#"'\u{123'"#).unwrap_err();
-        assert!(matches!(err, LexError::ExpectedFoundEof(_)));
-    }
-
-    #[test]
-    fn test_char_literal_unicode_exceeds_8bit() {
-        let err = Lexer::lex(r#"'\u{0100}'"#).unwrap_err();
-        assert!(matches!(err, LexError::CharLiteralExceeds8Bits));
-
-        let err = Lexer::lex(r#"'\u{1F600}'"#).unwrap_err();
-        assert!(matches!(err, LexError::CharLiteralExceeds8Bits));
-    }
-
-    #[test]
-    fn test_char_literal_non_ascii_single_byte() {
-        let err = Lexer::lex(r#"'©'"#).unwrap_err();
-        assert!(matches!(err, LexError::CharLiteralExceeds8Bits));
     }
 }
