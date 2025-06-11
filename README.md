@@ -7,6 +7,7 @@ Uses comptime instead of ugly generic markers to write code
 
 # Code Examples
 The below example is a basic implementation of a resizable vector.
+More examples can be found in the [examples](https://github.com/TheEmeraldBee/zel/tree/master/examples) directory.
 ```rust
 let i64 = int(64)
 let i8 = int(8)
@@ -55,6 +56,8 @@ let main = fn() -> i64 {
       my_vec = append(my_vec, i);
   };
 
+  my_vec = append(my_vec, '\n');
+
   puts(my_vec.ptr);
   0
 }
@@ -66,7 +69,7 @@ let main = fn() -> i64 {
 - [x] Implement enough of a compiler to create a vec type
   - Fun Fact: Just this turned the compiler into 1200 lines of code :)
 
-- [ ] String Literal Parsing Improvements: Allow for string literals to have escape characters
+- [x] String Literal Parsing Improvements: Allow for string literals to have escape characters
 - [ ] Better Separation of Comptime and Compiled Code. Introduce `const` keywork that will run code using comptime instead of compiling it.
 - [ ] `const top_level = fn() {}`, Replace most usages of let in top-level with const to show that the variable itself is comptime executed.
 
