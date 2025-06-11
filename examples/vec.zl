@@ -45,6 +45,8 @@ let main = fn() -> i64 {
       my_vec = append(my_vec, i);
   };
 
+  my_vec = append(my_vec, '\n');
+
   puts(my_vec.ptr);
   0
 }

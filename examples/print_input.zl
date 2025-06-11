@@ -4,7 +4,7 @@ let i8 = int(8)
 extern fn puts(text: *i8)
 
 let main = fn() -> i64 {
-  puts("Hello, World!");
+  puts("Hello, World!\u{1F600}");
 
   0
 }
